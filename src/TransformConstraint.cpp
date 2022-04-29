@@ -95,7 +95,7 @@ MObject TransformConstraint::constraintWorldInverseMatrix;
 MObject TransformConstraint::constraintParentInverseMatrix;
 MObject TransformConstraint::constraintObject;
 
-MTypeId	TransformConstraint::id(0x00131804);
+MTypeId	TransformConstraint::id(0x0013b1c2);
 MString	TransformConstraint::targetCategory("Target");
 MString	TransformConstraint::outputCategory("Output");
 
