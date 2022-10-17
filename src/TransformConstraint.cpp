@@ -93,28 +93,14 @@ MObject TransformConstraint::constraintInverseMatrix;
 MObject TransformConstraint::constraintWorldMatrix;
 MObject TransformConstraint::constraintWorldInverseMatrix;
 MObject TransformConstraint::constraintParentInverseMatrix;
-MObject TransformConstraint::constraintObject;
 
 MTypeId	TransformConstraint::id(0x0013b1c2);
 MString	TransformConstraint::targetCategory("Target");
 MString	TransformConstraint::outputCategory("Output");
 
-std::map<long, TransformConstraint*> TransformConstraint::instances = std::map<long, TransformConstraint*>();
-MCallbackId	TransformConstraint::childAddedCallbackId;
 
-
-TransformConstraint::TransformConstraint() {}
-
-
-TransformConstraint::~TransformConstraint()
-/**
-Destructor.
-*/
-{
-
-	this->instances.erase(this->hashCode());
-
-};
+TransformConstraint::TransformConstraint() {};
+TransformConstraint::~TransformConstraint() {};
 
 
 MStatus TransformConstraint::compute(const MPlug& plug, MDataBlock& data)
@@ -173,7 +159,7 @@ Only these values should be used when performing computations!
 
 		MVector restTranslate = restTranslateHandle.asVector();
 		MEulerRotation restRotate = MEulerRotation(restRotateHandle.asVector(), MEulerRotation::RotationOrder(constraintRotateOrder));
-		double3 &restScale = restScaleHandle.asDouble3();
+		MVector restScale = restScaleHandle.asVector();
 
 		MMatrix restTranslateMatrix = TransformConstraint::createPositionMatrix(restTranslate);
 		MMatrix restRotateMatrix = restRotate.asMatrix();
@@ -251,7 +237,7 @@ Only these values should be used when performing computations!
 			//
 			targetOffsetTranslateMatrix = TransformConstraint::createPositionMatrix(targetOffsetTranslateHandle.asVector());
 			targetOffsetRotateMatrix = TransformConstraint::createRotationMatrix(targetOffsetRotateHandle.asVector(), targetRotateOrder);
-			targetOffsetScaleMatrix = TransformConstraint::createScaleMatrix(targetOffsetScaleHandle.asDouble3());
+			targetOffsetScaleMatrix = TransformConstraint::createScaleMatrix(targetOffsetScaleHandle.asVector());
 
 			targetOffsetMatrix = targetOffsetScaleMatrix * targetOffsetRotateMatrix * targetOffsetTranslateMatrix;
 
@@ -393,652 +379,87 @@ Only these values should be used when performing computations!
 		return MS::kSuccess;
 
 	}
-	else;
-
-	return MS::kUnknownParameter;
-
-}
-
-
-void onChildAdded(MDagPath& child, MDagPath& parent, void* clientData)
-/**
-Child added callback function.
-This function will handle updating the constraint's parent handle.
-
-@param child: The newly added child.
-@param parent: The parent owner.
-@param clientData: Pointer to any client data passed on creation.
-@return: void
-*/
-{
-
-	MStatus status;
-
-	// Iterate through instances
-	//
-	std::map<long, TransformConstraint*>::iterator iter;
-
-	long hashCode;
-	TransformConstraint* constraint;
-
-	for (iter = TransformConstraint::instances.begin(); iter != TransformConstraint::instances.end(); iter++)
-	{
-
-		// Check if child is derived from constraint
-		//
-		hashCode = iter->first;
-		constraint = iter->second;
-
-		if (constraint->constraintHandle.object() == child.node())
-		{
-
-			status = constraint->updateConstraintParentInverseMatrix();
-			CHECK_MSTATUS(status);
-
-		}
-
-	}
-
-};
-
-
-MStatus TransformConstraint::legalConnection(const MPlug& plug, const MPlug& otherPlug, bool asSrc, bool& isLegal)
-/**
-This method allows you to check for legal connections being made to attributes of this node.
-You should return kUnknownParameter to specify that maya should handle this connection if you are unable to determine if it is legal.
-
-@param plug: Attribute on this node.
-@param otherPlug: Attribute on other node.
-@param asSrc: Is this plug a source of the connection.
-@param isLegal: Set this to true if the connection is legal otherwise false.
-@return: MStatus
-*/
-{
-
-	// Check the plug attribute
-	//
-	MObject attribute = plug.attribute();
-	
-	if (attribute == TransformConstraint::constraintObject && !asSrc)
-	{
-
-		// Verify other node is a dag node
-		//
-		MObject otherNode = otherPlug.node();
-		MObject otherAttribute = otherPlug.attribute();
-
-		if (otherNode.hasFn(MFn::kDagNode) && otherAttribute.hasFn(MFn::kMessageAttribute))
-		{
-
-			isLegal = true;
-
-		}
-		else
-		{
-
-			isLegal = false;
-
-		}
-
-		return MS::kSuccess;
-
-	}
-
-	return MS::kUnknownParameter;
-
-};
-
-
-MStatus TransformConstraint::connectionMade(const MPlug& plug, const MPlug& otherPlug, bool asSrc)
-/**
-This method gets called when connections are made to attributes of this node.
-You should return kUnknownParameter to specify that maya should handle this connection or if you want maya to process the connection as well.
-
-@param plug: Attribute on this node.
-@param otherPlug: Attribute on other node.
-@param asSrc: Is this plug a source of the connection.
-@return: MStatus
-*/
-{
-
-	MStatus status;
-
-	// Check the plug attribute
-	//
-	MObject attribute = plug.attribute();
-
-	if (attribute == TransformConstraint::constraintObject && !asSrc)
-	{
-
-		this->constraintHandle = MObjectHandle(otherPlug.node());
-
-	}
-
-	return MS::kUnknownParameter;
-
-};
-
-
-MStatus TransformConstraint::connectionBroken(const MPlug& plug, const MPlug& otherPlug, bool asSrc)
-/**
-This method gets called when connections are broken with attributes of this node.
-You should return kUnknownParameter to specify that maya should handle this connection or if you want maya to process the connection as well.
-
-@param plug: Attribute on this node.
-@param otherPlug: Attribute on other node.
-@param asSrc: Is this plug a source of the connection.
-@return: MStatus
-*/
-{
-
-	MStatus status;
-
-	// Check the plug attribute
-	//
-	MObject attribute = plug.attribute();
-
-	if (attribute == TransformConstraint::constraintObject && !asSrc)
-	{
-
-		this->constraintHandle = MObjectHandle();
-
-	}
-
-	return MS::kUnknownParameter;
-
-};
-
-
-MStatus TransformConstraint::connectPlugs(MPlug& source, MPlug& destination)
-/**
-Connects the two supplied plugs.
-
-@param source: The source plug.
-@param destination: The destination plug.
-@return: Return status;
-*/
-{
-
-	MStatus status;
-
-	// Check if plugs are valid
-	//
-	if (source.isNull() || destination.isNull())
-	{
-
-		return MS::kFailure;
-
-	}
-
-	// Execute dag modifier
-	//
-	MDagModifier dagModifier;
-
-	status = dagModifier.connect(source, destination);
-	CHECK_MSTATUS_AND_RETURN_IT(status);
-
-	return dagModifier.doIt();
-
-};
-
-
-MStatus TransformConstraint::disconnectPlugs(MPlug& source, MPlug& destination)
-/**
-Disconnects the two supplied plugs.
-
-@param source: The source plug.
-@param destination: The destination plug.
-@return: Return status;
-*/
-{
-
-	MStatus status;
-
-	// Check if plugs are valid
-	//
-	if (source.isNull() || destination.isNull())
-	{
-
-		return MS::kFailure;
-
-	}
-
-	// Execute dag modifier
-	//
-	MDagModifier dagModifier;
-
-	status = dagModifier.disconnect(source, destination);
-	CHECK_MSTATUS_AND_RETURN_IT(status);
-
-	return dagModifier.doIt();
-
-};
-
-
-MStatus TransformConstraint::breakConnections(MPlug& plug, bool source, bool destination)
-/**
-Breaks the specified connections from the supplied plug.
-
-@param plug: The plug the break connections from.
-@param source: Specifies if the source plug should be broken.
-@param destination: Specifies if the destination plugs should be broken.
-@return: Return status;
-*/
-{
-
-	MStatus status;
-
-	// Check if source connections should be broken
-	//
-	if (source)
-	{
-
-		MPlug otherPlug = plug.source();
-
-		if (!otherPlug.isNull())
-		{
-
-			status = TransformConstraint::disconnectPlugs(otherPlug, plug);
-			CHECK_MSTATUS_AND_RETURN_IT(status);
-
-		}
-
-	}
-
-	// Check if destination plugs should be broken
-	//
-	if (destination)
-	{
-
-		MPlugArray otherPlugs;
-
-		bool isConnected = plug.destinations(otherPlugs, &status);
-		CHECK_MSTATUS_AND_RETURN_IT(status);
-
-		unsigned int numOtherPlugs = otherPlugs.length();
-
-		for (unsigned int i = 0; i < numOtherPlugs; i++)
-		{
-
-			status = TransformConstraint::disconnectPlugs(plug, otherPlugs[i]);
-			CHECK_MSTATUS_AND_RETURN_IT(status);
-
-		}
-
-	}
-
-	return status;
-
-};
-
-
-MStatus TransformConstraint::updateConstraintParentInverseMatrix()
-/**
-Updates the plug connected to the constraintParentInverseMatrix plug.
-This function should be called by the childAdded callback whenever the constraint object's parent is changed.
-This will ensure the correct worldMatrix plug is used.
-
-@return: Return status.
-
-*/
-{
-
-	MStatus status;
-
-	// Check if constraint handle is still alive
-	//
-	if (!this->constraintHandle.isAlive())
-	{
-
-		return MS::kFailure;
-
-	}
-
-	MObject constraintObject = this->constraintHandle.object();
-
-	// Break connections to plug
-	//
-	MPlug constraintParentInverseMatrixPlug = MPlug(this->thisMObject(), TransformConstraint::constraintParentInverseMatrix);
-
-	status = TransformConstraint::breakConnections(constraintParentInverseMatrixPlug, true, false);
-	CHECK_MSTATUS_AND_RETURN_IT(status);
-
-	// Check if constraint object has a parent
-	//
-	MObject parent = TransformConstraint::getParentOf(constraintObject);
-
-	if (!parent.isNull())
-	{
-
-		// Initialize function set from dag path
-		//
-		MDagPath dagPath = TransformConstraint::getAPathTo(parent);
-
-		MFnDagNode fnDagNode(dagPath, &status);
-		CHECK_MSTATUS_AND_RETURN_IT(status);
-
-		// Connect parent's worldInverseMatrix plug to constraintParentInverseMatrix plug
-		// This will bypass any cyclical dependencies from the offsetParentMatrix plug!
-		//
-		MPlug worldInverseMatrixPlug = fnDagNode.findPlug("worldInverseMatrix", false, &status);
-		CHECK_MSTATUS_AND_RETURN_IT(status);
-
-		status = worldInverseMatrixPlug.selectAncestorLogicalIndex(dagPath.instanceNumber());
-		CHECK_MSTATUS_AND_RETURN_IT(status);
-
-		status = TransformConstraint::connectPlugs(worldInverseMatrixPlug, constraintParentInverseMatrixPlug);
-		CHECK_MSTATUS_AND_RETURN_IT(status);
-
-	}
 	else
 	{
-
-		// Reset plug matrix
-		//
-		MObject matrixData = TransformConstraint::createMatrixData(MMatrix::identity);
-
-		status = constraintParentInverseMatrixPlug.setMObject(matrixData);
-		CHECK_MSTATUS_AND_RETURN_IT(status);
-
-	}
-
-	return status;
-
-};
-
-
-MObject TransformConstraint::createMatrixData(MMatrix matrix)
-/**
-Converts a matrix into a data object compatible with plugs.
-
-@param matrix: The matrix to convert.
-@return: A matrix data object.
-*/
-{
-
-	MFnMatrixData fnMatrixData;
-
-	MObject matrixData = fnMatrixData.create();
-	fnMatrixData.set(matrix);
-
-	return matrixData;
-
-};
-
-
-MMatrix TransformConstraint::getMatrixData(MObject& matrixData)
-/**
-Converts a data object into a matrix compatible with plugs.
-
-@param matrixData: The data object to convert.
-@return: A matrix.
-*/
-{
-
-	MFnMatrixData fnMatrixData(matrixData);
-	return fnMatrixData.matrix();
-
-};
-
-
-MDagPath TransformConstraint::getAPathTo(MObject& dependNode)
-/**
-Returns the dag path for the supplied dag node.
-
-@param dependNode: The node to get a path to.
-@return: The dag path.
-*/
-{
-
-	// Verify this is a dag node
-	//
-	if (!dependNode.hasFn(MFn::kDagNode))
-	{
-
-		return MDagPath();
-
-	}
-
-	// Get a path to dag node
-	//
-	MDagPath dagPath;
-	MDagPath::getAPathTo(dependNode, dagPath);
-
-	return dagPath;
-
-}
-
-
-MObject TransformConstraint::getParentOf(MObject& dependNode)
-/**
-Returns the parent for the supplied dag node.
-
-@param dependNode: The node to get the parent for.
-@return: The parent node.
-*/
-{
-
-	// Verify this is a dag node
-	//
-	if (!dependNode.hasFn(MFn::kDagNode))
-	{
-
-		return MObject::kNullObj;
-
-	}
-
-	// Initialize function set
-	//
-	MDagPath dagPath = TransformConstraint::getAPathTo(dependNode);
-	MFnDagNode fnDagNode(dagPath);
-
-	unsigned int parentCount = fnDagNode.parentCount();
-
-	if (parentCount == 1)
-	{
-
-		return fnDagNode.parent(0);
-
-	}
-	else
-	{
-
-		return MObject::kNullObj;
+		
+		return MS::kUnknownParameter;
 
 	}
 
 }
 
 
-MObject TransformConstraint::getNodeByUUID(MUuid uuid)
+MStatus TransformConstraint::decomposeTransformMatrix(const MMatrix& matrix, MVector& position, MQuaternion& rotation, MVector& scale)
+/**
+Returns the translate, rotate and scale components from the supplied transform matrix.
+
+@param matrix: The transform matrix to extract from.
+@param position: The translation component.
+@param rotation: The rotation component.
+@param scale: The scale component.
+@return: Status code.
+*/
 {
 
-	// Collect all nodes from the given UUID
-	//
-	MObjectArray dependNodes = TransformConstraint::getNodesByUUID(uuid);
+	position = TransformConstraint::getTranslationPart(matrix);
+	rotation = TransformConstraint::getRotationPart(matrix);
+	scale = TransformConstraint::getScalePart(matrix);
 
-	// Check if this node has been referenced
-	//
-	MObject dependNode = this->thisMObject();
-	MFnDependencyNode fnDependNode(dependNode);
-
-	if (fnDependNode.isFromReferencedFile())
-	{
-
-		// Find reference associated with this node
-		//
-		MObject reference = TransformConstraint::getAssociatedReferenceNode(dependNode);
-		unsigned int numNodes = dependNodes.length();
-
-		switch (numNodes)
-		{
-
-			case 0:
-				return MObject::kNullObj;
-				break;
-
-			case 1:
-				return dependNodes[0];
-				break;
-
-			default:
-				return TransformConstraint::findReferencedNode(reference, dependNodes);
-				break;
-
-		}
-
-	}
-	else
-	{
-
-		// Inspect the number of found nodes
-		// This should be unique but accidents can happen...
-		//
-		unsigned int numNodes = dependNodes.length();
-
-		switch (numNodes)
-		{
-
-			case 0:
-				return MObject::kNullObj;
-				break;
-
-			default:
-				return dependNodes[0];
-				break;
-
-		}
-
-	}
-
-	return MObject::kNullObj;
+	return MS::kSuccess;
 
 };
 
 
-MObjectArray TransformConstraint::getNodesByUUID(MUuid uuid)
+MVector TransformConstraint::getTranslationPart(const MMatrix& matrix)
 /**
-Returns a list of nodes associated with the given UUID
+Returns the translation component from the supplied transform matrix.
 
-@param uuid: The UUID to test against.
-@return: An array of dependency nodes with the given UUID.
+@param matrix: The transform matrix to extract from.
+@return: The translation component.
 */
 {
 
-	MStatus status;
-
-	// Add UUID to selection list
-	//
-	MSelectionList selection;
-
-	status = selection.add(uuid);
-	CHECK_MSTATUS(status);
-
-	// Add nodes to object array
-	//
-	unsigned int numFound = selection.length();
-
-	MObjectArray dependNodes = MObjectArray(numFound);
-	MObject dependNode;
-
-	for (unsigned int i = 0; i < numFound; i++)
-	{
-
-		status = selection.getDependNode(i, dependNode);
-		CHECK_MSTATUS(status);
-
-		dependNodes[i] = dependNode;
-
-	}
-
-	return dependNodes;
+	return MVector(matrix(3, 0), matrix(3, 1), matrix(3, 2));
 
 };
 
 
-MObject TransformConstraint::getAssociatedReferenceNode(MObject& dependNode)
+MQuaternion TransformConstraint::getRotationPart(const MMatrix& matrix)
 /**
-Returns the reference node associated with the given dependency node.
-If the dependency node is not referenced then a null object is returned instead!
+Returns the rotation component from the supplied transform matrix.
 
-@param dependNode: The node to find the reference for.
-@return: The associated reference node.
+@param matrix: The transform matrix to extract from.
+@return: The rotation component.
 */
 {
 
-	MFnDependencyNode fnDependNode(dependNode);
+	MQuaternion rotationPart;
+	rotationPart = TransformConstraint::createRotationMatrix(matrix);
 
-	if (fnDependNode.isFromReferencedFile())
-	{
-
-		MItDependencyNodes iterNodes = MItDependencyNodes(MFn::kReference);
-
-		MObject reference;
-		MFnReference fnReference;
-
-		while (!iterNodes.isDone())
-		{
-
-			reference = iterNodes.thisNode();
-			fnReference.setObject(reference);
-
-			if (fnReference.containsNodeExactly(dependNode))
-			{
-
-				return reference;
-
-			}
-
-			iterNodes.next();
-
-		}
-
-	}
-
-	return MObject::kNullObj;
+	return rotationPart;
 
 };
 
 
-MObject TransformConstraint::findReferencedNode(MObject& reference, MObjectArray& dependNodes)
+MVector TransformConstraint::getScalePart(const MMatrix& matrix)
 /**
-Returns the node from the supplied array that belongs to the given reference.
+Returns the scale component from the supplied transform matrix.
 
-@param reference: The reference node to compare against.
-@param dependNodes: An array of dependency nodes to test against.
-@return: The node associated with the given reference.
+@param matrix: The transform matrix to extract from.
+@return: The scale component.
 */
 {
 
-	// Iterate through dependency nodes
-	//
-	MFnReference fnReference(reference);
-	unsigned int numDependNodes = dependNodes.length();
+	MVector xAxis = MVector(matrix(0, 0), matrix(0, 1), matrix(0, 2));
+	MVector yAxis = MVector(matrix(1, 0), matrix(1, 1), matrix(1, 2));
+	MVector zAxis = MVector(matrix(2, 0), matrix(2, 1), matrix(2, 2));
 
-	MObject dependNode;
+	return MVector(xAxis.length(), yAxis.length(), zAxis.length());
 
-	for (unsigned int i = 0; i < numDependNodes; i++)
-	{
-
-		// Check if node belongs to reference
-		//
-		dependNode = dependNodes[i];
-
-		if (fnReference.containsNodeExactly(dependNode))
-		{
-
-			return dependNode;
-
-		}
-
-	}
-
-	return MObject::kNullObj;
-
-}
+};
 
 
-MMatrix TransformConstraint::createPositionMatrix(MVector position)
+MMatrix TransformConstraint::createPositionMatrix(const MVector& position)
 /**
 Creates a position matrix from the given vector.
 
@@ -1047,21 +468,35 @@ Creates a position matrix from the given vector.
 */
 {
 
-	double matrix[4][4] = {
+	double matrixRows[4][4] = {
 		{ 1.0, 0.0, 0.0, 0.0 },
 		{ 0.0, 1.0, 0.0, 0.0 },
 		{ 0.0, 0.0, 1.0, 0.0 },
 		{ position.x, position.y, position.z, 1.0 },
 	};
 
-	return MMatrix(matrix);
+	return MMatrix(matrixRows);
 
 };
 
 
-MMatrix TransformConstraint::createRotationMatrix(MVector rotation, int rotateOrder)
+MMatrix TransformConstraint::createPositionMatrix(const MMatrix& matrix)
 /**
-Creates a rotation matrix from the given vector and rotation order.
+Returns the position component from the supplied transform matrix.
+
+@param position: The transform matrix to extract from.
+@return: The new position matrix.
+*/
+{
+
+	return TransformConstraint::createPositionMatrix(TransformConstraint::getTranslationPart(matrix));
+
+};
+
+
+MMatrix TransformConstraint::createRotationMatrix(const MVector& rotation, const int rotateOrder)
+/**
+Returns a rotation matrix from the supplied vector and rotation order.
 
 @param rotation: The vector to convert.
 @param rotateOrder: The order of rotations.
@@ -1074,23 +509,62 @@ Creates a rotation matrix from the given vector and rotation order.
 };
 
 
-MMatrix TransformConstraint::createScaleMatrix(double3 scale)
+MMatrix TransformConstraint::createRotationMatrix(const MMatrix& matrix)
 /**
-Creates a scale matrix from the given vector.
+Returns the rotation component from the supplied transform matrix.
+
+@param matrix: The transform matrix to extract from.
+@return: The new rotation matrix.
+*/
+{
+
+	MVector xAxis = MVector(matrix(0, 0), matrix(0, 1), matrix(0, 2));
+	MVector yAxis = MVector(matrix(1, 0), matrix(1, 1), matrix(1, 2));
+	MVector zAxis = MVector(matrix(2, 0), matrix(2, 1), matrix(2, 2));
+
+	double matrixRows[4][4] = {
+		{ xAxis.x, xAxis.y, xAxis.z, 0.0 },
+		{ yAxis.x, yAxis.y, yAxis.z, 0.0 },
+		{ zAxis.x, zAxis.y, zAxis.z, 0.0 },
+		{ 0.0, 0.0, 0.0, 1.0 },
+	};
+
+	return MMatrix(matrixRows);
+
+};
+
+
+MMatrix TransformConstraint::createScaleMatrix(const MVector& scale)
+/**
+Returns a scale matrix from the supplied vector.
 
 @param scale: The vector to convert.
 @return: The new scale matrix.
 */
 {
 
-	double matrix[4][4] = {
-		{ scale[0], 0.0, 0.0, 0.0 },
-		{ 0.0, scale[1], 0.0, 0.0 },
-		{ 0.0, 0.0, scale[2], 0.0 },
+	double matrixRows[4][4] = {
+		{ scale.x, 0.0, 0.0, 0.0 },
+		{ 0.0, scale.y, 0.0, 0.0 },
+		{ 0.0, 0.0, scale.z, 0.0 },
 		{ 0.0, 0.0, 0.0, 1.0 },
 	};
 
-	return MMatrix(matrix);
+	return MMatrix(matrixRows);
+
+};
+
+
+MMatrix TransformConstraint::createScaleMatrix(const MMatrix& matrix)
+/**
+Returns a scale matrix from the supplied transform matrix.
+
+@param matrix: The transform matrix to extract from.
+@return: The new scale matrix.
+*/
+{
+
+	return TransformConstraint::createScaleMatrix(TransformConstraint::getScalePart(matrix));
 
 };
 
@@ -1111,7 +585,7 @@ Linearly interpolates the two given numbers using the supplied weight.
 };
 
 
-MMatrix TransformConstraint::blendMatrices(MMatrix startMatrix, MMatrix endMatrix, float weight)
+MMatrix TransformConstraint::blendMatrices(const MMatrix& startMatrix, const MMatrix& endMatrix, const float weight)
 /**
 Interpolates the two given matrices using the supplied weight.
 Both translate and scale will be lerp'd while rotation will be slerp'd.
@@ -1123,38 +597,22 @@ Both translate and scale will be lerp'd while rotation will be slerp'd.
 */
 {
 
-	// Initialize transformation matrices
+	MStatus status;
+
+	// Decompose transform matrices
 	//
-	MTransformationMatrix startTransformationMatrix = MTransformationMatrix(startMatrix);
-	MTransformationMatrix endTransformationMatrix = MTransformationMatrix(endMatrix);
+	MVector startTranslation, endTranslation;
+	MVector startScale, endScale;
+	MQuaternion startQuat, endQuat;
+
+	TransformConstraint::decomposeTransformMatrix(startMatrix, startTranslation, startQuat, startScale);
+	TransformConstraint::decomposeTransformMatrix(endMatrix, endTranslation, endQuat, endScale);
 
 	// Interpolate translation
 	//
-	MVector startTranslation = startTransformationMatrix.getTranslation(MSpace::kTransform);
-	MVector endTranslation = endTransformationMatrix.getTranslation(MSpace::kTransform);
-
 	MVector translation = lerp(startTranslation, endTranslation, weight);
-
-	// Interpolate rotation
-	//
-	MQuaternion startQuat = startTransformationMatrix.rotation();
-	MQuaternion endQuat = endTransformationMatrix.rotation();
-
 	MQuaternion quat = TransformConstraint::slerp(startQuat, endQuat, weight);
-
-	// Interpolate scale
-	//
-	double startScale[3];
-	double endScale[3];
-
-	startTransformationMatrix.getScale(startScale, MSpace::kTransform);
-	endTransformationMatrix.getScale(endScale, MSpace::kTransform);
-
-	double scale[3] = {
-		lerp(startScale[0], endScale[0], weight),
-		lerp(startScale[1], endScale[1], weight),
-		lerp(startScale[2], endScale[2], weight)
-	};
+	MVector scale = lerp(startScale, endScale, weight);
 
 	// Compose interpolated matrix
 	//
@@ -1167,7 +625,7 @@ Both translate and scale will be lerp'd while rotation will be slerp'd.
 };
 
 
-MMatrix TransformConstraint::blendMatrices(MMatrix restMatrix, MMatrixArray matrices, MFloatArray weights)
+MMatrix TransformConstraint::blendMatrices(const MMatrix& restMatrix, const MMatrixArray& matrices, const MFloatArray& weights)
 /**
 Interpolates the supplied matrices using the weight array as a blend aplha.
 The rest matrix is used just in case the weights don't equal 1.
@@ -1265,9 +723,25 @@ The rest matrix is used just in case the weights don't equal 1.
 };
 
 
-MQuaternion TransformConstraint::slerp(MQuaternion startQuat, MQuaternion endQuat, float weight)
+double TransformConstraint::dot(const MQuaternion& quat, const MQuaternion& otherQuat)
+/**
+Returns the dot product of two quaternions.
+
+@param quat: Quaternion.
+@param: otherQuat: Other quaternion.
+@return: Dot length.
+*/
+{
+
+	return (quat.x * otherQuat.x) + (quat.y * otherQuat.y) + (quat.z * otherQuat.z) + (quat.w * otherQuat.w);
+
+};
+
+
+MQuaternion TransformConstraint::slerp(const MQuaternion& startQuat, const MQuaternion& endQuat, const float weight)
 /**
 Spherical interpolates two quaternions.
+See the following for details: https://www.euclideanspace.com/maths/algebra/realNormedAlgebra/quaternions/slerp/index.htm
 
 @param startQuat: Start Quaternion.
 @param endQuat: End Quaternion.
@@ -1276,55 +750,47 @@ Spherical interpolates two quaternions.
 */
 {
 
-	// Calculate angle between quats
-	// If startQuat == endQuat or startQuat == -endQuat then theta = 0 and we can return startQuat
-	//
-	double cos_half_theta = startQuat.w * endQuat.w + startQuat.x * endQuat.x + startQuat.y * endQuat.y + startQuat.z * endQuat.z;
+	MQuaternion q1 = MQuaternion(startQuat);
+	MQuaternion q2 = MQuaternion(endQuat);
 
-	if (abs(cos_half_theta) >= 1.0)
+	double dot = TransformConstraint::dot(q1, q2);
+
+	if (dot < 0.0)
 	{
 
-		return MQuaternion(startQuat);
+		dot = TransformConstraint::dot(q1, q2.negateIt());
 
 	}
 
-	// Calculate temporary values
-	// If theta = 180 degrees then result is not fully defined
-	// We could rotate around any axis normal to startQuat or endQuat
-	//
-	MQuaternion quat = MQuaternion();
+	double theta = acos(dot);
+	double sinTheta = sin(theta);
 
-	double half_theta = acos(cos_half_theta);
-	double sin_half_theta = sqrt(1.0 - cos_half_theta * cos_half_theta);
+	double w1, w2;
 
-	if (fabs(sin_half_theta) < 0.001)
+	if (sinTheta > 1e-3)
 	{
 
-		quat.x = startQuat.x * 0.5 + endQuat.x * 0.5;
-		quat.y = startQuat.y * 0.5 + endQuat.y * 0.5;
-		quat.z = startQuat.z * 0.5 + endQuat.z * 0.5;
-		quat.w = startQuat.w * 0.5 + endQuat.w * 0.5;
+		w1 = sin((1.0 - weight) * theta) / sinTheta;
+		w2 = sin(weight * theta) / sinTheta;
 
-		return quat;
+	}
+	else
+	{
+
+		w1 = 1.0 - weight;
+		w2 = weight;
 
 	}
 
-	// Calculate quaternion
-	//
-	double ratio_a = sin((1.0 - weight) * half_theta) / sin_half_theta;
-	double ratio_b = sin(weight * half_theta) / sin_half_theta;
+	q1.scaleIt(w1);
+	q2.scaleIt(w2);
 
-	quat.w = startQuat.w * ratio_a + endQuat.w * ratio_b;
-	quat.x = startQuat.x * ratio_a + endQuat.x * ratio_b;
-	quat.y = startQuat.y * ratio_a + endQuat.y * ratio_b;
-	quat.z = startQuat.z * ratio_a + endQuat.z * ratio_b;
+	return q1 + q2;
 
-	return quat;
-
-}
+};
 
 
-float TransformConstraint::sum(MFloatArray items)
+float TransformConstraint::sum(const MFloatArray& items)
 /**
 Calculates the sum of all the supplied items.
 
@@ -1350,7 +816,7 @@ Calculates the sum of all the supplied items.
 };
 
 
-MFloatArray TransformConstraint::clamp(MFloatArray items)
+MFloatArray TransformConstraint::clamp(const MFloatArray& items)
 /**
 Clamps the supplied items so they don't exceed 1.
 Anything below that is left alone and compensated for using the rest matrix.
@@ -1450,37 +916,6 @@ See pluginMain.cpp for details.
 };
 
 
-void TransformConstraint::postConstructor()
-/**
-Internally maya creates two objects when a user defined node is created, the internal MObject and the user derived object.
-The association between the these two objects is not made until after the MPxNode constructor is called.
-This implies that no MPxNode member function can be called from the MPxNode constructor.
-The postConstructor will get called immediately after the constructor when it is safe to call any MPxNode member function.
-
-@return: void
-*/
-{
-
-	// Store reference to this instance
-	//
-	this->instances.insert(std::make_pair(this->hashCode(), this));
-
-};
-
-
-long TransformConstraint::hashCode()
-/**
-Returns the hash code for this instance.
-
-@return: Hash code.
-*/
-{
-
-	return MObjectHandle(this->thisMObject()).hashCode();
-
-};
-
-
 MStatus TransformConstraint::initialize()
 /**
 This function is called by Maya after a plugin has been loaded.
@@ -1560,11 +995,6 @@ Use this function to define any static attributes.
 	// ".restScale" attribute
 	//
 	TransformConstraint::restScale = fnNumericAttr.create("restScale", "rs", TransformConstraint::restScaleX, TransformConstraint::restScaleY, TransformConstraint::restScaleZ, &status);
-	CHECK_MSTATUS_AND_RETURN_IT(status);
-
-	// ".constraintObject" attribute
-	//
-	TransformConstraint::constraintObject = fnMessageAttr.create("constraintObject", "co", &status);
 	CHECK_MSTATUS_AND_RETURN_IT(status);
 
 	// ".constraintRotateOrder" attribute
@@ -1766,7 +1196,6 @@ Use this function to define any static attributes.
 	CHECK_MSTATUS(fnEnumAttr.addField("xzy", 3));
 	CHECK_MSTATUS(fnEnumAttr.addField("yxz", 4));
 	CHECK_MSTATUS(fnEnumAttr.addField("zyx", 5));
-
 	CHECK_MSTATUS(fnEnumAttr.addToCategory(TransformConstraint::targetCategory));
 
 	// ".targetScaleX" attribute
@@ -2143,7 +1572,6 @@ Use this function to define any static attributes.
 	CHECK_MSTATUS(TransformConstraint::addAttribute(TransformConstraint::constraintWorldMatrix));
 	CHECK_MSTATUS(TransformConstraint::addAttribute(TransformConstraint::constraintWorldInverseMatrix));
 	CHECK_MSTATUS(TransformConstraint::addAttribute(TransformConstraint::constraintParentInverseMatrix));
-	CHECK_MSTATUS(TransformConstraint::addAttribute(TransformConstraint::constraintObject));
 
 	// Define target attribute relationships
 	//
@@ -2215,10 +1643,6 @@ Use this function to define any static attributes.
 	CHECK_MSTATUS(TransformConstraint::attributeAffects(TransformConstraint::constraintParentInverseMatrix, TransformConstraint::constraintInverseMatrix));
 	CHECK_MSTATUS(TransformConstraint::attributeAffects(TransformConstraint::constraintParentInverseMatrix, TransformConstraint::constraintWorldMatrix));
 	CHECK_MSTATUS(TransformConstraint::attributeAffects(TransformConstraint::constraintParentInverseMatrix, TransformConstraint::constraintWorldInverseMatrix));
-
-	// Create child added callback
-	//
-	TransformConstraint::childAddedCallbackId = MDagMessage::addChildAddedCallback(onChildAdded);
 
 	return MS::kSuccess;
 

@@ -46,16 +46,6 @@ MStatus uninitializePlugin(MObject obj)
 
 	}
 
-	status = MDagMessage::removeCallback(TransformConstraint::childAddedCallbackId);
-
-	if (!status)
-	{
-
-		status.perror("removeCallback");
-		return status;
-
-	}
-
 	return status;
 
 }

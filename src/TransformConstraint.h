@@ -62,46 +62,33 @@ public:
 
 	static  void*			creator();
 	static  MStatus			initialize();
-	virtual	void			postConstructor();
-	virtual	long			hashCode();
-
-	virtual	MStatus			legalConnection(const MPlug& plug, const MPlug& otherPlug, bool asSrc, bool& isLegal);
-	virtual	MStatus			connectionMade(const MPlug& plug, const MPlug& otherPlug, bool asSrc);
-	virtual	MStatus			connectionBroken(const MPlug& plug, const MPlug& otherPlug, bool asSrc);
-
-	static	MStatus			connectPlugs(MPlug& source, MPlug& destination);
-	static	MStatus			disconnectPlugs(MPlug& source, MPlug& destination);
-	static	MStatus			breakConnections(MPlug& plug, bool source, bool destination);
 
 	const	MObject			targetAttribute() const override;
 	const	MObject			weightAttribute() const override;
 	const	MObject			constraintRotateOrderAttribute() const override;
+	
+	static	MStatus			decomposeTransformMatrix(const MMatrix& matrix, MVector& position, MQuaternion& rotation, MVector& scale);
+	static	MVector			getTranslationPart(const MMatrix& matrix);
+	static	MQuaternion		getRotationPart(const MMatrix& matrix);
+	static	MVector			getScalePart(const MMatrix& matrix);
 
-	virtual	MStatus			updateConstraintParentInverseMatrix();
+	static	MMatrix			createPositionMatrix(const MVector& position);
+	static	MMatrix			createPositionMatrix(const MMatrix& matrix);
 
-	static	MDagPath		getAPathTo(MObject& dependNode);
-	static	MObject			getParentOf(MObject& dependNode);
+	static	MMatrix			createRotationMatrix(const MVector& rotation, const int rotateOrder);
+	static	MMatrix			createRotationMatrix(const MMatrix& matrix);
 
-	virtual	MObject			getNodeByUUID(MUuid uuid);
-	static	MObjectArray	getNodesByUUID(MUuid uuid);
+	static	MMatrix			createScaleMatrix(const MVector& scale);
+	static	MMatrix			createScaleMatrix(const MMatrix& matrix);
 
-	static	MObject			createMatrixData(MMatrix matrix);
-	static	MMatrix			getMatrixData(MObject& matrixData);
+	static	double			dot(const MQuaternion& startQuat, const MQuaternion& endQuat);
+	static	MQuaternion		slerp(const MQuaternion& startQuat, const MQuaternion& endQuat, const float weight);
 
-	static	MObject			getAssociatedReferenceNode(MObject& dependNode);
-	static	MObject			findReferencedNode(MObject& reference, MObjectArray& dependNodes);
+	static	MMatrix			blendMatrices(const MMatrix& restMatrix, const MMatrixArray& matrices, const MFloatArray& weights);
+	static	MMatrix			blendMatrices(const MMatrix& startMatrix, const MMatrix& endMatrix, const float weight);
 
-	static	MMatrix			createPositionMatrix(MVector position);
-	static	MMatrix			createRotationMatrix(MVector rotation, int rotateOrder);
-	static	MMatrix			createScaleMatrix(double3 scale);
-
-	static	MMatrix			blendMatrices(MMatrix restMatrix, MMatrixArray matrices, MFloatArray weights);
-	static	MMatrix			blendMatrices(MMatrix startMatrix, MMatrix endMatrix, float weight);
-
-	static	MQuaternion		slerp(MQuaternion startQuat, MQuaternion endQuat, float weight);
-
-	static	float			sum(MFloatArray items);
-	static	MFloatArray		clamp(MFloatArray items);
+	static	float			sum(const MFloatArray& items);
+	static	MFloatArray		clamp(const MFloatArray& items);
 
 public:
 
@@ -196,14 +183,9 @@ public:
 
 public:
 
-	static	MTypeId			id;
-	static	MString			targetCategory;
-	static	MString			outputCategory;
-			
-			MObjectHandle	constraintHandle;
-	static	MCallbackId		childAddedCallbackId;
-
-	static	std::map<long, TransformConstraint*>	instances;
+	static	MTypeId		id;
+	static	MString		targetCategory;
+	static	MString		outputCategory;
 
 };
 
