@@ -15,7 +15,7 @@ MStatus initializePlugin(MObject obj)
 	MStatus status;
 
 	MFnPlugin plugin(obj, "Ben Singleton", "2020", "Any");
-	status = plugin.registerNode("transformConstraint", TransformConstraint::id, TransformConstraint::creator, TransformConstraint::initialize, MPxNode::kConstraintNode);
+	status = plugin.registerNode("transformConstraint", TransformConstraint::id, TransformConstraint::creator, TransformConstraint::initialize, MPxNode::kConstraintNode, &TransformConstraint::classification);
 	
 	if (!status)
 	{
