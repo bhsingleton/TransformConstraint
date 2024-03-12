@@ -524,9 +524,9 @@ Returns the rotation component from the supplied transform matrix.
 */
 {
 
-	MVector xAxis = MVector(matrix(0, 0), matrix(0, 1), matrix(0, 2));
-	MVector yAxis = MVector(matrix(1, 0), matrix(1, 1), matrix(1, 2));
-	MVector zAxis = MVector(matrix(2, 0), matrix(2, 1), matrix(2, 2));
+	MVector xAxis = MVector(matrix(0, 0), matrix(0, 1), matrix(0, 2)).normal();
+	MVector yAxis = MVector(matrix(1, 0), matrix(1, 1), matrix(1, 2)).normal();
+	MVector zAxis = MVector(matrix(2, 0), matrix(2, 1), matrix(2, 2)).normal();
 
 	double matrixRows[4][4] = {
 		{ xAxis.x, xAxis.y, xAxis.z, 0.0 },
@@ -678,8 +678,8 @@ The rest matrix is used just in case the weights don't equal 1.
 
 			// Get start matrix
 			//
-			MFloatArray clampedWeights = TransformConstraint::clamp(weights);
-			float weightSum = TransformConstraint::sum(clampedWeights);
+			MFloatArray normalizedWeights = TransformConstraint::clamp(weights);
+			float weightSum = TransformConstraint::sum(normalizedWeights);
 
 			MMatrix matrix = MMatrix(matrices[0]);
 
@@ -697,7 +697,7 @@ The rest matrix is used just in case the weights don't equal 1.
 			for (unsigned int i = 0; i < numMatrices; i++)
 			{
 
-				matrix = TransformConstraint::blendMatrices(matrix, matrices[i], weights[i]);
+				matrix = TransformConstraint::blendMatrices(matrix, matrices[i], normalizedWeights[i]);
 
 			}
 
