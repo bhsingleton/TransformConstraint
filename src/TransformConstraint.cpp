@@ -276,7 +276,7 @@ Only these values should be used when performing computations!
 			targetScalePivotMatrix = TransformConstraint::createPositionMatrix(targetScalePivotHandle.asVector());
 			targetScalePivotTranslateMatrix = TransformConstraint::createPositionMatrix(targetScalePivotTranslateHandle.asVector());
 
-			targetMatrices[i] = targetScalePivotMatrix.inverse() * targetScaleMatrix * targetScalePivotMatrix * targetScalePivotTranslateMatrix * targetRotatePivotMatrix.inverse() * targetJointOrientMatrix * targetRotateMatrix * targetRotatePivotMatrix * targetRotatePivotTranslateMatrix * targetTranslateMatrix;
+			targetMatrices[i] = targetScalePivotMatrix.inverse() * targetScaleMatrix * targetScalePivotMatrix * targetScalePivotTranslateMatrix * targetRotatePivotMatrix.inverse() * targetRotateMatrix * targetRotatePivotMatrix * targetJointOrientMatrix * targetRotatePivotTranslateMatrix * targetTranslateMatrix;
 			targetWorldMatrices[i] = (targetOffsetMatrix * targetMatrices[i]) * targetParentMatrix;
 
 		}
@@ -651,13 +651,13 @@ The rest matrix is used just in case the weights don't equal 1.
 			//
 			float weightSum = TransformConstraint::sum(weights);
 
-			if (weightSum == 1.0f)
+			if (weightSum >= 1.0f)
 			{
 
 				return MMatrix(matrices[0]);
 
 			}
-			else if (weightSum == 0.f)
+			else if (weightSum <= 0.f)
 			{
 
 				return MMatrix(restMatrix);
@@ -683,7 +683,7 @@ The rest matrix is used just in case the weights don't equal 1.
 
 			MMatrix matrix = MMatrix(matrices[0]);
 
-			if (weightSum < 1.0f)
+			if (weightSum < 0.999)
 			{
 
 				matrix = MMatrix(restMatrix);
