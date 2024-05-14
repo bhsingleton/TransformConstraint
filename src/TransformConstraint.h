@@ -118,6 +118,11 @@ public:
 	static	MObject			targetScaleX;
 	static	MObject			targetScaleY;
 	static	MObject			targetScaleZ;
+	static	MObject			targetSegmentScaleCompensate;
+	static	MObject			targetInverseScale;
+	static	MObject			targetInverseScaleX;
+	static	MObject			targetInverseScaleY;
+	static	MObject			targetInverseScaleZ;
 	static	MObject			targetOffsetScale;
 	static	MObject			targetOffsetScaleX;
 	static	MObject			targetOffsetScaleY;
