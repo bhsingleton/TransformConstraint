@@ -55,6 +55,7 @@ public:
 	static	MStatus			decomposeTransformMatrix(const MMatrix& matrix, MVector& position, MQuaternion& rotation, MVector& scale);
 	static	MVector			getTranslationPart(const MMatrix& matrix);
 	static	MQuaternion		getRotationPart(const MMatrix& matrix);
+	static	MEulerRotation	getRotationPart(const MMatrix& matrix, const MEulerRotation::RotationOrder order);
 	static	MVector			getScalePart(const MMatrix& matrix);
 
 	static	MMatrix			createPositionMatrix(const MPoint& position);
@@ -164,6 +165,11 @@ public:
 	static	MObject			constraintJointOrientX;
 	static	MObject			constraintJointOrientY;
 	static	MObject			constraintJointOrientZ;
+	static	MObject			constraintSegmentScaleCompensate;
+	static	MObject			constraintInverseScale;
+	static	MObject			constraintInverseScaleX;
+	static	MObject			constraintInverseScaleY;
+	static	MObject			constraintInverseScaleZ;
 	static	MObject			constraintMatrix;
 	static	MObject			constraintInverseMatrix;
 	static	MObject			constraintWorldMatrix;

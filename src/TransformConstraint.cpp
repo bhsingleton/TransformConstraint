@@ -93,6 +93,11 @@ MObject TransformConstraint::constraintScale;
 MObject TransformConstraint::constraintScaleX;
 MObject TransformConstraint::constraintScaleY;
 MObject TransformConstraint::constraintScaleZ;
+MObject TransformConstraint::constraintSegmentScaleCompensate;
+MObject TransformConstraint::constraintInverseScale;
+MObject TransformConstraint::constraintInverseScaleX;
+MObject TransformConstraint::constraintInverseScaleY;
+MObject TransformConstraint::constraintInverseScaleZ;
 MObject TransformConstraint::constraintMatrix;
 MObject TransformConstraint::constraintInverseMatrix;
 MObject TransformConstraint::constraintWorldMatrix;
@@ -175,6 +180,12 @@ Only these values should be used when performing computations!
 		MDataHandle constraintJointOrientHandle = data.inputValue(TransformConstraint::constraintJointOrient, &status);
 		CHECK_MSTATUS_AND_RETURN_IT(status);
 
+		MDataHandle constraintSegmentScaleCompensateHandle = data.inputValue(TransformConstraint::constraintSegmentScaleCompensate, &status);
+		CHECK_MSTATUS_AND_RETURN_IT(status);
+
+		MDataHandle constraintInverseScaleHandle = data.inputValue(TransformConstraint::constraintInverseScale, &status);
+		CHECK_MSTATUS_AND_RETURN_IT(status);
+
 		MArrayDataHandle targetArrayHandle = data.inputArrayValue(TransformConstraint::target, &status);
 		CHECK_MSTATUS_AND_RETURN_IT(status);
 
@@ -184,6 +195,11 @@ Only these values should be used when performing computations!
 
 		MEulerRotation constraintJointOrient = MEulerRotation(constraintJointOrientHandle.asVector(), constraintRotateOrder);
 		MMatrix constraintJointOrientMatrix = constraintJointOrient.asMatrix();
+
+		bool constraintSegmentScaleCompensate = constraintSegmentScaleCompensateHandle.asBool();
+		MVector constraintInverseScale = constraintInverseScaleHandle.asVector();
+		MVector constraintScaleCompensation = MVector((1.0 / constraintInverseScale.x), (1.0 / constraintInverseScale.y), (1.0 / constraintInverseScale.z));
+		MMatrix constraintInverseScaleMatrix = constraintSegmentScaleCompensate ? TransformConstraint::createScaleMatrix(constraintScaleCompensation) : MMatrix::identity;
 
 		MMatrix constraintParentInverseMatrix = constraintParentInverseMatrixHandle.asMatrix();
 		MMatrix constraintParentMatrix = constraintParentInverseMatrix.inverse();
@@ -195,7 +211,7 @@ Only these values should be used when performing computations!
 		MVector restScale = restScaleHandle.asVector();
 		MMatrix restScaleMatrix = TransformConstraint::createScaleMatrix(restScale);
 		MMatrix restMatrix = restScaleMatrix * restRotateMatrix * restTranslateMatrix;
-		MMatrix restWorldMatrix = restMatrix * constraintParentInverseMatrix.inverse();
+		MMatrix restWorldMatrix = restMatrix * constraintParentMatrix;
 
 		// Collect target matrices
 		//
@@ -215,7 +231,7 @@ Only these values should be used when performing computations!
 
 		MEulerRotation::RotationOrder targetRotateOrder;
 		bool targetSegmentScaleCompensate;
-		MVector targetInverseScale, targetScaleCompensate;
+		MVector targetInverseScale, targetScaleCompensation;
 		MMatrix targetOffsetMatrix;
 		MMatrix targetParentMatrix;
 		MMatrix targetTranslateMatrix, targetOffsetTranslateMatrix;
@@ -277,8 +293,8 @@ Only these values should be used when performing computations!
 			targetScaleMatrix = TransformConstraint::createScaleMatrix(targetScaleHandle.asDouble3());
 			targetSegmentScaleCompensate = targetSegmentScaleCompensateHandle.asBool();
 			targetInverseScale = MVector(targetInverseScaleHandle.asDouble3());
-			targetScaleCompensate = MVector((1.0 / targetInverseScale.x), (1.0 / targetInverseScale.y), (1.0 / targetInverseScale.z));
-			targetInverseScaleMatrix = targetSegmentScaleCompensate ? TransformConstraint::createScaleMatrix(targetScaleCompensate) : MMatrix::identity;
+			targetScaleCompensation = MVector((1.0 / targetInverseScale.x), (1.0 / targetInverseScale.y), (1.0 / targetInverseScale.z));
+			targetInverseScaleMatrix = targetSegmentScaleCompensate ? TransformConstraint::createScaleMatrix(targetScaleCompensation) : MMatrix::identity;
 
 			targetRotatePivotMatrix = TransformConstraint::createPositionMatrix(targetRotatePivotHandle.asVector());
 			targetRotatePivotTranslateMatrix = TransformConstraint::createPositionMatrix(targetRotatePivotTranslateHandle.asVector());
@@ -291,6 +307,11 @@ Only these values should be used when performing computations!
 			targetWorldMatrices[i] = (targetOffsetMatrix * targetMatrices[i]) * targetParentMatrix;
 
 		}
+
+		// Compute weighted constraint matrix
+		//
+		MMatrix constraintWorldMatrix = TransformConstraint::blendMatrices(restWorldMatrix, targetWorldMatrices, targetWeights);
+		MMatrix constraintMatrix = constraintWorldMatrix * constraintParentInverseMatrix;
 
 		// Get output data handles
 		//
@@ -333,11 +354,6 @@ Only these values should be used when performing computations!
 		MDataHandle constraintWorldInverseMatrixHandle = data.outputValue(TransformConstraint::constraintWorldInverseMatrix, &status);
 		CHECK_MSTATUS_AND_RETURN_IT(status);
 
-		// Compute weighted constraint matrix
-		//
-		MMatrix constraintWorldMatrix = TransformConstraint::blendMatrices(restWorldMatrix, targetWorldMatrices, targetWeights);
-		MMatrix constraintMatrix = constraintWorldMatrix * constraintParentInverseMatrix;
-
 		// Set translation constraint
 		//
 		MVector constraintTranslate = TransformConstraint::getTranslationPart(constraintMatrix);
@@ -353,9 +369,7 @@ Only these values should be used when performing computations!
 		// Set rotation constraint
 		//
 		MMatrix constraintRotateMatrix = TransformConstraint::createRotationMatrix(constraintMatrix) * constraintJointOrientMatrix.inverse();
-
-		MEulerRotation constraintRotate = TransformConstraint::getRotationPart(constraintRotateMatrix).asEulerRotation();
-		constraintRotate.reorderIt(constraintRotateOrder);
+		MEulerRotation constraintRotate = TransformConstraint::getRotationPart(constraintRotateMatrix, constraintRotateOrder);
 
 		constraintRotateXHandle.setMAngle(MAngle(constraintRotate.x, MAngle::kRadians));
 		constraintRotateYHandle.setMAngle(MAngle(constraintRotate.y, MAngle::kRadians));
@@ -367,7 +381,8 @@ Only these values should be used when performing computations!
 
 		// Set scale constraint
 		//
-		MVector constraintScale = TransformConstraint::getScalePart(constraintMatrix);
+		MMatrix constraintScaleMatrix = constraintMatrix * constraintInverseScaleMatrix.inverse();
+		MVector constraintScale = TransformConstraint::getScalePart(constraintScaleMatrix);
 
 		constraintScaleXHandle.setDouble(constraintScale.x);
 		constraintScaleYHandle.setDouble(constraintScale.y);
@@ -455,6 +470,25 @@ Returns the rotation component from the supplied transform matrix.
 	rotationPart = TransformConstraint::createRotationMatrix(matrix);
 
 	return rotationPart;
+
+};
+
+
+MEulerRotation TransformConstraint::getRotationPart(const MMatrix& matrix, const MEulerRotation::RotationOrder order)
+/**
+Returns the rotation component from the supplied transform matrix.
+
+@param matrix: The transform matrix to extract from.
+@return: The euler rotation component.
+*/
+{
+
+	MQuaternion quaternion = TransformConstraint::getRotationPart(matrix);
+
+	MEulerRotation eulerRotation = quaternion.asEulerRotation();
+	eulerRotation.reorderIt(order);
+
+	return eulerRotation;
 
 };
 
@@ -937,7 +971,7 @@ Use this function to define any static attributes.
 	MFnMatrixAttribute fnMatrixAttr;
 
 	// Input attributes:
-	// ".restTranslateX" attribute
+	// Initialize `restTranslateX` attribute
 	//
 	TransformConstraint::restTranslateX = fnUnitAttr.create("restTranslateX", "rtx", MFnUnitAttribute::kDistance, 0.0, &status);
 	CHECK_MSTATUS_AND_RETURN_IT(status);
@@ -945,7 +979,7 @@ Use this function to define any static attributes.
 	CHECK_MSTATUS(fnUnitAttr.addToCategory(TransformConstraint::inputCategory));
 	CHECK_MSTATUS(fnUnitAttr.addToCategory(TransformConstraint::restCategory));
 
-	// ".restTranslateY" attribute
+	// Initialize `restTranslateY` attribute
 	//
 	TransformConstraint::restTranslateY = fnUnitAttr.create("restTranslateY", "rty", MFnUnitAttribute::kDistance, 0.0, &status);
 	CHECK_MSTATUS_AND_RETURN_IT(status);
@@ -953,7 +987,7 @@ Use this function to define any static attributes.
 	CHECK_MSTATUS(fnUnitAttr.addToCategory(TransformConstraint::inputCategory));
 	CHECK_MSTATUS(fnUnitAttr.addToCategory(TransformConstraint::restCategory));
 
-	// ".restTranslateZ" attribute
+	// Initialize `restTranslateZ` attribute
 	//
 	TransformConstraint::restTranslateZ = fnUnitAttr.create("restTranslateZ", "rtz", MFnUnitAttribute::kDistance, 0.0, &status);
 	CHECK_MSTATUS_AND_RETURN_IT(status);
@@ -961,7 +995,7 @@ Use this function to define any static attributes.
 	CHECK_MSTATUS(fnUnitAttr.addToCategory(TransformConstraint::inputCategory));
 	CHECK_MSTATUS(fnUnitAttr.addToCategory(TransformConstraint::restCategory));
 
-	// ".restTranslate" attribute
+	// Initialize `restTranslate` attribute
 	//
 	TransformConstraint::restTranslate = fnNumericAttr.create("restTranslate", "rt", TransformConstraint::restTranslateX, TransformConstraint::restTranslateY, TransformConstraint::restTranslateZ, &status);
 	CHECK_MSTATUS_AND_RETURN_IT(status);
@@ -969,7 +1003,7 @@ Use this function to define any static attributes.
 	CHECK_MSTATUS(fnNumericAttr.addToCategory(TransformConstraint::inputCategory));
 	CHECK_MSTATUS(fnNumericAttr.addToCategory(TransformConstraint::restCategory));
 
-	// ".restRotateX" attribute
+	// Initialize `restRotateX` attribute
 	//
 	TransformConstraint::restRotateX = fnUnitAttr.create("restRotateX", "rrx", MFnUnitAttribute::kAngle, 0.0, &status);
 	CHECK_MSTATUS_AND_RETURN_IT(status);
@@ -977,7 +1011,7 @@ Use this function to define any static attributes.
 	CHECK_MSTATUS(fnUnitAttr.addToCategory(TransformConstraint::inputCategory));
 	CHECK_MSTATUS(fnUnitAttr.addToCategory(TransformConstraint::restCategory));
 
-	// ".restRotateY" attribute
+	// Initialize `restRotateY` attribute
 	//
 	TransformConstraint::restRotateY = fnUnitAttr.create("restRotateY", "rry", MFnUnitAttribute::kAngle, 0.0, &status);
 	CHECK_MSTATUS_AND_RETURN_IT(status);
@@ -985,7 +1019,7 @@ Use this function to define any static attributes.
 	CHECK_MSTATUS(fnUnitAttr.addToCategory(TransformConstraint::inputCategory));
 	CHECK_MSTATUS(fnUnitAttr.addToCategory(TransformConstraint::restCategory));
 
-	// ".restRotateZ" attribute
+	// Initialize `restRotateZ` attribute
 	//
 	TransformConstraint::restRotateZ = fnUnitAttr.create("restRotateZ", "rrz", MFnUnitAttribute::kAngle, 0.0, &status);
 	CHECK_MSTATUS_AND_RETURN_IT(status);
@@ -993,7 +1027,7 @@ Use this function to define any static attributes.
 	CHECK_MSTATUS(fnUnitAttr.addToCategory(TransformConstraint::inputCategory));
 	CHECK_MSTATUS(fnUnitAttr.addToCategory(TransformConstraint::restCategory));
 
-	// ".restRotate" attribute
+	// Initialize `restRotate` attribute
 	//
 	TransformConstraint::restRotate = fnNumericAttr.create("restRotate", "rr", TransformConstraint::restRotateX, TransformConstraint::restRotateY, TransformConstraint::restRotateZ, &status);
 	CHECK_MSTATUS_AND_RETURN_IT(status);
@@ -1001,7 +1035,7 @@ Use this function to define any static attributes.
 	CHECK_MSTATUS(fnNumericAttr.addToCategory(TransformConstraint::inputCategory));
 	CHECK_MSTATUS(fnNumericAttr.addToCategory(TransformConstraint::restCategory));
 
-	// ".restScaleX" attribute
+	// Initialize `restScaleX` attribute
 	//
 	TransformConstraint::restScaleX = fnNumericAttr.create("restScaleX", "rsx", MFnNumericData::kDouble, 1.0, &status);
 	CHECK_MSTATUS_AND_RETURN_IT(status);
@@ -1009,7 +1043,7 @@ Use this function to define any static attributes.
 	CHECK_MSTATUS(fnNumericAttr.addToCategory(TransformConstraint::inputCategory));
 	CHECK_MSTATUS(fnNumericAttr.addToCategory(TransformConstraint::restCategory));
 
-	// ".restScaleY" attribute
+	// Initialize `restScaleY` attribute
 	//
 	TransformConstraint::restScaleY = fnNumericAttr.create("restScaleY", "rsy", MFnNumericData::kDouble, 1.0, &status);
 	CHECK_MSTATUS_AND_RETURN_IT(status);
@@ -1017,7 +1051,7 @@ Use this function to define any static attributes.
 	CHECK_MSTATUS(fnNumericAttr.addToCategory(TransformConstraint::inputCategory));
 	CHECK_MSTATUS(fnNumericAttr.addToCategory(TransformConstraint::restCategory));
 
-	// ".restScaleZ" attribute
+	// Initialize `restScaleZ` attribute
 	//
 	TransformConstraint::restScaleZ = fnNumericAttr.create("restScaleZ", "rsz", MFnNumericData::kDouble, 1.0, &status);
 	CHECK_MSTATUS_AND_RETURN_IT(status);
@@ -1025,7 +1059,7 @@ Use this function to define any static attributes.
 	CHECK_MSTATUS(fnNumericAttr.addToCategory(TransformConstraint::inputCategory));
 	CHECK_MSTATUS(fnNumericAttr.addToCategory(TransformConstraint::restCategory));
 
-	// ".restScale" attribute
+	// Initialize `restScale` attribute
 	//
 	TransformConstraint::restScale = fnNumericAttr.create("restScale", "rs", TransformConstraint::restScaleX, TransformConstraint::restScaleY, TransformConstraint::restScaleZ, &status);
 	CHECK_MSTATUS_AND_RETURN_IT(status);
@@ -1033,7 +1067,7 @@ Use this function to define any static attributes.
 	CHECK_MSTATUS(fnNumericAttr.addToCategory(TransformConstraint::inputCategory));
 	CHECK_MSTATUS(fnNumericAttr.addToCategory(TransformConstraint::restCategory));
 
-	// ".constraintRotateOrder" attribute
+	// Initialize `constraintRotateOrder` attribute
 	//
 	TransformConstraint::constraintRotateOrder = fnEnumAttr.create("constraintRotateOrder", "cro", short(0), &status);
 	CHECK_MSTATUS_AND_RETURN_IT(status);
@@ -1046,35 +1080,70 @@ Use this function to define any static attributes.
 	CHECK_MSTATUS(fnEnumAttr.addField("zyx", 5));
 	CHECK_MSTATUS(fnEnumAttr.addToCategory(TransformConstraint::inputCategory));
 
-	// ".constraintJointOrientX" attribute
+	// Initialize `constraintJointOrientX` attribute
 	//
 	TransformConstraint::constraintJointOrientX = fnUnitAttr.create("constraintJointOrientX", "cjox", MFnUnitAttribute::kAngle, 0.0, &status);
 	CHECK_MSTATUS_AND_RETURN_IT(status);
 
 	CHECK_MSTATUS(fnUnitAttr.addToCategory(TransformConstraint::inputCategory));
 
-	// ".constraintJointOrientY" attribute
+	// Initialize `constraintJointOrientY` attribute
 	//
 	TransformConstraint::constraintJointOrientY = fnUnitAttr.create("constraintJointOrientY", "cjoy", MFnUnitAttribute::kAngle, 0.0, &status);
 	CHECK_MSTATUS_AND_RETURN_IT(status);
 
 	CHECK_MSTATUS(fnUnitAttr.addToCategory(TransformConstraint::inputCategory));
 
-	// ".constraintJointOrientZ" attribute
+	// Initialize `constraintJointOrientZ` attribute
 	//
 	TransformConstraint::constraintJointOrientZ = fnUnitAttr.create("constraintJointOrientZ", "cjoz", MFnUnitAttribute::kAngle, 0.0, &status);
 	CHECK_MSTATUS_AND_RETURN_IT(status);
 
 	CHECK_MSTATUS(fnUnitAttr.addToCategory(TransformConstraint::inputCategory));
 
-	// ".constraintJointOrient" attribute
+	// Initialize `constraintJointOrient` attribute
 	//
 	TransformConstraint::constraintJointOrient = fnNumericAttr.create("constraintJointOrient", "cjo", TransformConstraint::constraintJointOrientX, TransformConstraint::constraintJointOrientY, TransformConstraint::constraintJointOrientZ, &status);
 	CHECK_MSTATUS_AND_RETURN_IT(status);
 
 	CHECK_MSTATUS(fnNumericAttr.addToCategory(TransformConstraint::inputCategory));
 
-	// ".constraintParentInverseMatrix" attribute
+	// Initialize `constraintSegmentScaleCompensate` attribute
+	//
+	TransformConstraint::constraintSegmentScaleCompensate = fnNumericAttr.create("constraintSegmentScaleCompensate", "cssc", MFnNumericData::kBoolean, false, &status);
+	CHECK_MSTATUS_AND_RETURN_IT(status);
+
+	CHECK_MSTATUS(fnNumericAttr.addToCategory(TransformConstraint::inputCategory));
+
+	// Initialize `constraintInverseScaleX` attribute
+	//
+	TransformConstraint::constraintInverseScaleX = fnNumericAttr.create("constraintInverseScaleX", "cisx", MFnNumericData::kDouble, 1.0, &status);
+	CHECK_MSTATUS_AND_RETURN_IT(status);
+
+	CHECK_MSTATUS(fnUnitAttr.addToCategory(TransformConstraint::inputCategory));
+
+	// Initialize `constraintInverseScaleY` attribute
+	//
+	TransformConstraint::constraintInverseScaleY = fnNumericAttr.create("constraintInverseScaleY", "cisy", MFnNumericData::kDouble, 1.0, &status);
+	CHECK_MSTATUS_AND_RETURN_IT(status);
+
+	CHECK_MSTATUS(fnUnitAttr.addToCategory(TransformConstraint::inputCategory));
+
+	// Initialize `constraintInverseScaleZ` attribute
+	//
+	TransformConstraint::constraintInverseScaleZ = fnNumericAttr.create("constraintInverseScaleZ", "cisz", MFnNumericData::kDouble, 1.0, &status);
+	CHECK_MSTATUS_AND_RETURN_IT(status);
+
+	CHECK_MSTATUS(fnUnitAttr.addToCategory(TransformConstraint::inputCategory));
+
+	// Initialize `constraintInverseScale` attribute
+	//
+	TransformConstraint::constraintInverseScale = fnNumericAttr.create("constraintInverseScale", "cis", TransformConstraint::constraintInverseScaleX, TransformConstraint::constraintInverseScaleY, TransformConstraint::constraintInverseScaleZ, &status);
+	CHECK_MSTATUS_AND_RETURN_IT(status);
+
+	CHECK_MSTATUS(fnNumericAttr.addToCategory(TransformConstraint::inputCategory));
+
+	// Initialize `constraintParentInverseMatrix` attribute
 	//
 	TransformConstraint::constraintParentInverseMatrix = fnMatrixAttr.create("constraintParentInverseMatrix", "cpim", MFnMatrixAttribute::kDouble, &status);
 	CHECK_MSTATUS_AND_RETURN_IT(status);
@@ -1082,7 +1151,7 @@ Use this function to define any static attributes.
 	CHECK_MSTATUS(fnMatrixAttr.addToCategory(TransformConstraint::inputCategory));
 
 	// Target Attributes:
-	// Define ".targetWeight" attribute
+	// Define ".targetWeight` attribute
 	//
 	TransformConstraint::targetWeight = fnNumericAttr.create("targetWeight", "tw", MFnNumericData::kFloat, 0.0f, &status);
 	CHECK_MSTATUS_AND_RETURN_IT(status);
@@ -1092,7 +1161,7 @@ Use this function to define any static attributes.
 	CHECK_MSTATUS(fnNumericAttr.addToCategory(TransformConstraint::inputCategory));
 	CHECK_MSTATUS(fnNumericAttr.addToCategory(TransformConstraint::targetCategory));
 
-	// ".targetTranslateX" attribute
+	// Initialize `targetTranslateX` attribute
 	//
 	TransformConstraint::targetTranslateX = fnUnitAttr.create("targetTranslateX", "ttx", MFnUnitAttribute::kDistance, 0.0, &status);
 	CHECK_MSTATUS_AND_RETURN_IT(status);
@@ -1100,7 +1169,7 @@ Use this function to define any static attributes.
 	CHECK_MSTATUS(fnUnitAttr.addToCategory(TransformConstraint::inputCategory));
 	CHECK_MSTATUS(fnUnitAttr.addToCategory(TransformConstraint::targetCategory));
 
-	// ".targetTranslateY" attribute
+	// Initialize `targetTranslateY` attribute
 	//
 	TransformConstraint::targetTranslateY = fnUnitAttr.create("targetTranslateY", "tty", MFnUnitAttribute::kDistance, 0.0, &status);
 	CHECK_MSTATUS_AND_RETURN_IT(status);
@@ -1108,7 +1177,7 @@ Use this function to define any static attributes.
 	CHECK_MSTATUS(fnUnitAttr.addToCategory(TransformConstraint::inputCategory));
 	CHECK_MSTATUS(fnUnitAttr.addToCategory(TransformConstraint::targetCategory));
 
-	// ".targetTranslateZ" attribute
+	// Initialize `targetTranslateZ` attribute
 	//
 	TransformConstraint::targetTranslateZ = fnUnitAttr.create("targetTranslateZ", "ttz", MFnUnitAttribute::kDistance, 0.0, &status);
 	CHECK_MSTATUS_AND_RETURN_IT(status);
@@ -1116,7 +1185,7 @@ Use this function to define any static attributes.
 	CHECK_MSTATUS(fnUnitAttr.addToCategory(TransformConstraint::inputCategory));
 	CHECK_MSTATUS(fnUnitAttr.addToCategory(TransformConstraint::targetCategory));
 
-	// ".targetTranslate" attribute
+	// Initialize `targetTranslate` attribute
 	//
 	TransformConstraint::targetTranslate = fnNumericAttr.create("targetTranslate", "tt", TransformConstraint::targetTranslateX, TransformConstraint::targetTranslateY, TransformConstraint::targetTranslateZ, &status);
 	CHECK_MSTATUS_AND_RETURN_IT(status);
@@ -1124,7 +1193,7 @@ Use this function to define any static attributes.
 	CHECK_MSTATUS(fnNumericAttr.addToCategory(TransformConstraint::inputCategory));
 	CHECK_MSTATUS(fnNumericAttr.addToCategory(TransformConstraint::targetCategory));
 
-	// ".targetOffsetTranslateX" attribute
+	// Initialize `targetOffsetTranslateX` attribute
 	//
 	TransformConstraint::targetOffsetTranslateX = fnUnitAttr.create("targetOffsetTranslateX", "totx", MFnUnitAttribute::kDistance, 0.0, &status);
 	CHECK_MSTATUS_AND_RETURN_IT(status);
@@ -1132,7 +1201,7 @@ Use this function to define any static attributes.
 	CHECK_MSTATUS(fnUnitAttr.addToCategory(TransformConstraint::inputCategory));
 	CHECK_MSTATUS(fnUnitAttr.addToCategory(TransformConstraint::targetCategory));
 
-	// ".targetOffsetTranslateY" attribute
+	// Initialize `targetOffsetTranslateY` attribute
 	//
 	TransformConstraint::targetOffsetTranslateY = fnUnitAttr.create("targetOffsetTranslateY", "toty", MFnUnitAttribute::kDistance, 0.0, &status);
 	CHECK_MSTATUS_AND_RETURN_IT(status);
@@ -1140,7 +1209,7 @@ Use this function to define any static attributes.
 	CHECK_MSTATUS(fnUnitAttr.addToCategory(TransformConstraint::inputCategory));
 	CHECK_MSTATUS(fnUnitAttr.addToCategory(TransformConstraint::targetCategory));
 
-	// ".targetOffsetTranslateZ" attribute
+	// Initialize `targetOffsetTranslateZ` attribute
 	//
 	TransformConstraint::targetOffsetTranslateZ = fnUnitAttr.create("targetOffsetTranslateZ", "totz", MFnUnitAttribute::kDistance, 0.0, &status);
 	CHECK_MSTATUS_AND_RETURN_IT(status);
@@ -1148,7 +1217,7 @@ Use this function to define any static attributes.
 	CHECK_MSTATUS(fnUnitAttr.addToCategory(TransformConstraint::inputCategory));
 	CHECK_MSTATUS(fnUnitAttr.addToCategory(TransformConstraint::targetCategory));
 
-	// ".targetOffsetTranslate" attribute
+	// Initialize `targetOffsetTranslate` attribute
 	//
 	TransformConstraint::targetOffsetTranslate = fnNumericAttr.create("targetOffsetTranslate", "tot", TransformConstraint::targetOffsetTranslateX, TransformConstraint::targetOffsetTranslateY, TransformConstraint::targetOffsetTranslateZ, &status);
 	CHECK_MSTATUS_AND_RETURN_IT(status);
@@ -1156,7 +1225,7 @@ Use this function to define any static attributes.
 	CHECK_MSTATUS(fnNumericAttr.addToCategory(TransformConstraint::inputCategory));
 	CHECK_MSTATUS(fnUnitAttr.addToCategory(TransformConstraint::targetCategory));
 
-	// ".targetJointOrientX" attribute
+	// Initialize `targetJointOrientX` attribute
 	//
 	TransformConstraint::targetJointOrientX = fnUnitAttr.create("targetJointOrientX", "tjox", MFnUnitAttribute::kAngle, 0.0, &status);
 	CHECK_MSTATUS_AND_RETURN_IT(status);
@@ -1164,7 +1233,7 @@ Use this function to define any static attributes.
 	CHECK_MSTATUS(fnUnitAttr.addToCategory(TransformConstraint::inputCategory));
 	CHECK_MSTATUS(fnUnitAttr.addToCategory(TransformConstraint::targetCategory));
 
-	// ".targetJointOrientY" attribute
+	// Initialize `targetJointOrientY` attribute
 	//
 	TransformConstraint::targetJointOrientY = fnUnitAttr.create("targetJointOrientY", "tjoy", MFnUnitAttribute::kAngle, 0.0, &status);
 	CHECK_MSTATUS_AND_RETURN_IT(status);
@@ -1172,7 +1241,7 @@ Use this function to define any static attributes.
 	CHECK_MSTATUS(fnUnitAttr.addToCategory(TransformConstraint::inputCategory));
 	CHECK_MSTATUS(fnUnitAttr.addToCategory(TransformConstraint::targetCategory));
 
-	// ".targetJointOrientZ" attribute
+	// Initialize `targetJointOrientZ` attribute
 	//
 	TransformConstraint::targetJointOrientZ = fnUnitAttr.create("targetJointOrientZ", "tjoz", MFnUnitAttribute::kAngle, 0.0, &status);
 	CHECK_MSTATUS_AND_RETURN_IT(status);
@@ -1180,7 +1249,7 @@ Use this function to define any static attributes.
 	CHECK_MSTATUS(fnUnitAttr.addToCategory(TransformConstraint::inputCategory));
 	CHECK_MSTATUS(fnUnitAttr.addToCategory(TransformConstraint::targetCategory));
 
-	// ".targetJointOrient" attribute
+	// Initialize `targetJointOrient` attribute
 	//
 	TransformConstraint::targetJointOrient = fnNumericAttr.create("targetJointOrient", "tjo", TransformConstraint::targetJointOrientX, TransformConstraint::targetJointOrientY, TransformConstraint::targetJointOrientZ, &status);
 	CHECK_MSTATUS_AND_RETURN_IT(status);
@@ -1188,7 +1257,7 @@ Use this function to define any static attributes.
 	CHECK_MSTATUS(fnNumericAttr.addToCategory(TransformConstraint::inputCategory));
 	CHECK_MSTATUS(fnNumericAttr.addToCategory(TransformConstraint::targetCategory));
 
-	// ".targetRotateX" attribute
+	// Initialize `targetRotateX` attribute
 	//
 	TransformConstraint::targetRotateX = fnUnitAttr.create("targetRotateX", "trx", MFnUnitAttribute::kAngle, 0.0, &status);
 	CHECK_MSTATUS_AND_RETURN_IT(status);
@@ -1196,7 +1265,7 @@ Use this function to define any static attributes.
 	CHECK_MSTATUS(fnUnitAttr.addToCategory(TransformConstraint::inputCategory));
 	CHECK_MSTATUS(fnUnitAttr.addToCategory(TransformConstraint::targetCategory));
 
-	// ".targetRotateY" attribute
+	// Initialize `targetRotateY` attribute
 	//
 	TransformConstraint::targetRotateY = fnUnitAttr.create("targetRotateY", "try", MFnUnitAttribute::kAngle, 0.0, &status);
 	CHECK_MSTATUS_AND_RETURN_IT(status);
@@ -1204,7 +1273,7 @@ Use this function to define any static attributes.
 	CHECK_MSTATUS(fnUnitAttr.addToCategory(TransformConstraint::inputCategory));
 	CHECK_MSTATUS(fnUnitAttr.addToCategory(TransformConstraint::targetCategory));
 
-	// ".targetRotateZ" attribute
+	// Initialize `targetRotateZ` attribute
 	//
 	TransformConstraint::targetRotateZ = fnUnitAttr.create("targetRotateZ", "trz", MFnUnitAttribute::kAngle, 0.0, &status);
 	CHECK_MSTATUS_AND_RETURN_IT(status);
@@ -1212,7 +1281,7 @@ Use this function to define any static attributes.
 	CHECK_MSTATUS(fnUnitAttr.addToCategory(TransformConstraint::inputCategory));
 	CHECK_MSTATUS(fnUnitAttr.addToCategory(TransformConstraint::targetCategory));
 
-	// ".targetRotate" attribute
+	// Initialize `targetRotate` attribute
 	//
 	TransformConstraint::targetRotate = fnNumericAttr.create("targetRotate", "tr", TransformConstraint::targetRotateX, TransformConstraint::targetRotateY, TransformConstraint::targetRotateZ, &status);
 	CHECK_MSTATUS_AND_RETURN_IT(status);
@@ -1220,7 +1289,7 @@ Use this function to define any static attributes.
 	CHECK_MSTATUS(fnNumericAttr.addToCategory(TransformConstraint::inputCategory));
 	CHECK_MSTATUS(fnNumericAttr.addToCategory(TransformConstraint::targetCategory));
 
-	// ".targetOffsetRotateX" attribute
+	// Initialize `targetOffsetRotateX` attribute
 	//
 	TransformConstraint::targetOffsetRotateX = fnUnitAttr.create("targetOffsetRotateX", "torx", MFnUnitAttribute::kAngle, 0.0, &status);
 	CHECK_MSTATUS_AND_RETURN_IT(status);
@@ -1228,7 +1297,7 @@ Use this function to define any static attributes.
 	CHECK_MSTATUS(fnUnitAttr.addToCategory(TransformConstraint::inputCategory));
 	CHECK_MSTATUS(fnUnitAttr.addToCategory(TransformConstraint::targetCategory));
 
-	// ".targetOffsetRotateY" attribute
+	// Initialize `targetOffsetRotateY` attribute
 	//
 	TransformConstraint::targetOffsetRotateY = fnUnitAttr.create("targetOffsetRotateY", "tory", MFnUnitAttribute::kAngle, 0.0, &status);
 	CHECK_MSTATUS_AND_RETURN_IT(status);
@@ -1236,7 +1305,7 @@ Use this function to define any static attributes.
 	CHECK_MSTATUS(fnUnitAttr.addToCategory(TransformConstraint::inputCategory));
 	CHECK_MSTATUS(fnUnitAttr.addToCategory(TransformConstraint::targetCategory));
 
-	// ".targetOffsetRotateZ" attribute
+	// Initialize `targetOffsetRotateZ` attribute
 	//
 	TransformConstraint::targetOffsetRotateZ = fnUnitAttr.create("targetOffsetRotateZ", "torz", MFnUnitAttribute::kAngle, 0.0, &status);
 	CHECK_MSTATUS_AND_RETURN_IT(status);
@@ -1244,7 +1313,7 @@ Use this function to define any static attributes.
 	CHECK_MSTATUS(fnUnitAttr.addToCategory(TransformConstraint::inputCategory));
 	CHECK_MSTATUS(fnUnitAttr.addToCategory(TransformConstraint::targetCategory));
 
-	// ".targetOffsetRotate" attribute
+	// Initialize `targetOffsetRotate` attribute
 	//
 	TransformConstraint::targetOffsetRotate = fnNumericAttr.create("targetOffsetRotate", "tor", TransformConstraint::targetOffsetRotateX, TransformConstraint::targetOffsetRotateY, TransformConstraint::targetOffsetRotateZ, &status);
 	CHECK_MSTATUS_AND_RETURN_IT(status);
@@ -1252,7 +1321,7 @@ Use this function to define any static attributes.
 	CHECK_MSTATUS(fnNumericAttr.addToCategory(TransformConstraint::inputCategory));
 	CHECK_MSTATUS(fnNumericAttr.addToCategory(TransformConstraint::targetCategory));
 
-	// ".targetRotateOrder" attribute
+	// Initialize `targetRotateOrder` attribute
 	//
 	TransformConstraint::targetRotateOrder = fnEnumAttr.create("targetRotateOrder", "tro", short(0), &status);
 	CHECK_MSTATUS_AND_RETURN_IT(status);
@@ -1266,7 +1335,7 @@ Use this function to define any static attributes.
 	CHECK_MSTATUS(fnEnumAttr.addToCategory(TransformConstraint::inputCategory));
 	CHECK_MSTATUS(fnEnumAttr.addToCategory(TransformConstraint::targetCategory));
 
-	// ".targetScaleX" attribute
+	// Initialize `targetScaleX` attribute
 	//
 	TransformConstraint::targetScaleX = fnNumericAttr.create("targetScaleX", "tsx", MFnNumericData::kDouble, 1.0, &status);
 	CHECK_MSTATUS_AND_RETURN_IT(status);
@@ -1274,7 +1343,7 @@ Use this function to define any static attributes.
 	CHECK_MSTATUS(fnNumericAttr.addToCategory(TransformConstraint::inputCategory));
 	CHECK_MSTATUS(fnNumericAttr.addToCategory(TransformConstraint::targetCategory));
 
-	// ".targetScaleY" attribute
+	// Initialize `targetScaleY` attribute
 	//
 	TransformConstraint::targetScaleY = fnNumericAttr.create("targetScaleY", "tsy", MFnNumericData::kDouble, 1.0, &status);
 	CHECK_MSTATUS_AND_RETURN_IT(status);
@@ -1282,7 +1351,7 @@ Use this function to define any static attributes.
 	CHECK_MSTATUS(fnNumericAttr.addToCategory(TransformConstraint::inputCategory));
 	CHECK_MSTATUS(fnNumericAttr.addToCategory(TransformConstraint::targetCategory));
 
-	// ".targetScaleZ" attribute
+	// Initialize `targetScaleZ` attribute
 	//
 	TransformConstraint::targetScaleZ = fnNumericAttr.create("targetScaleZ", "tsz", MFnNumericData::kDouble, 1.0, &status);
 	CHECK_MSTATUS_AND_RETURN_IT(status);
@@ -1290,7 +1359,7 @@ Use this function to define any static attributes.
 	CHECK_MSTATUS(fnNumericAttr.addToCategory(TransformConstraint::inputCategory));
 	CHECK_MSTATUS(fnNumericAttr.addToCategory(TransformConstraint::targetCategory));
 
-	// ".targetScale" attribute
+	// Initialize `targetScale` attribute
 	//
 	TransformConstraint::targetScale = fnNumericAttr.create("targetScale", "ts", TransformConstraint::targetScaleX, TransformConstraint::targetScaleY, TransformConstraint::targetScaleZ, &status);
 	CHECK_MSTATUS_AND_RETURN_IT(status);
@@ -1298,7 +1367,7 @@ Use this function to define any static attributes.
 	CHECK_MSTATUS(fnNumericAttr.addToCategory(TransformConstraint::inputCategory));
 	CHECK_MSTATUS(fnNumericAttr.addToCategory(TransformConstraint::targetCategory));
 
-	// ".targetSegmentScaleCompensate" attribute
+	// Initialize `targetSegmentScaleCompensate` attribute
 	//
 	TransformConstraint::targetSegmentScaleCompensate = fnNumericAttr.create("targetSegmentScaleCompensate", "tssc", MFnNumericData::kBoolean, false, &status);
 	CHECK_MSTATUS_AND_RETURN_IT(status);
@@ -1306,7 +1375,7 @@ Use this function to define any static attributes.
 	CHECK_MSTATUS(fnNumericAttr.addToCategory(TransformConstraint::inputCategory));
 	CHECK_MSTATUS(fnNumericAttr.addToCategory(TransformConstraint::targetCategory));
 
-	// ".targetInverseScaleX" attribute
+	// Initialize `targetInverseScaleX` attribute
 	//
 	TransformConstraint::targetInverseScaleX = fnNumericAttr.create("targetInverseScaleX", "tisx", MFnNumericData::kDouble, 1.0, &status);
 	CHECK_MSTATUS_AND_RETURN_IT(status);
@@ -1314,7 +1383,7 @@ Use this function to define any static attributes.
 	CHECK_MSTATUS(fnNumericAttr.addToCategory(TransformConstraint::inputCategory));
 	CHECK_MSTATUS(fnNumericAttr.addToCategory(TransformConstraint::targetCategory));
 
-	// ".targetInverseScaleY" attribute
+	// Initialize `targetInverseScaleY` attribute
 	//
 	TransformConstraint::targetInverseScaleY = fnNumericAttr.create("targetInverseScaleY", "tisy", MFnNumericData::kDouble, 1.0, &status);
 	CHECK_MSTATUS_AND_RETURN_IT(status);
@@ -1322,7 +1391,7 @@ Use this function to define any static attributes.
 	CHECK_MSTATUS(fnNumericAttr.addToCategory(TransformConstraint::inputCategory));
 	CHECK_MSTATUS(fnNumericAttr.addToCategory(TransformConstraint::targetCategory));
 
-	// ".targetInverseScaleZ" attribute
+	// Initialize `targetInverseScaleZ` attribute
 	//
 	TransformConstraint::targetInverseScaleZ = fnNumericAttr.create("targetInverseScaleZ", "tisz", MFnNumericData::kDouble, 1.0, &status);
 	CHECK_MSTATUS_AND_RETURN_IT(status);
@@ -1330,7 +1399,7 @@ Use this function to define any static attributes.
 	CHECK_MSTATUS(fnNumericAttr.addToCategory(TransformConstraint::inputCategory));
 	CHECK_MSTATUS(fnNumericAttr.addToCategory(TransformConstraint::targetCategory));
 
-	// ".targetInverseScale" attribute
+	// Initialize `targetInverseScale` attribute
 	//
 	TransformConstraint::targetInverseScale = fnNumericAttr.create("targetInverseScale", "tis", TransformConstraint::targetInverseScaleX, TransformConstraint::targetInverseScaleY, TransformConstraint::targetInverseScaleZ, &status);
 	CHECK_MSTATUS_AND_RETURN_IT(status);
@@ -1338,7 +1407,7 @@ Use this function to define any static attributes.
 	CHECK_MSTATUS(fnNumericAttr.addToCategory(TransformConstraint::inputCategory));
 	CHECK_MSTATUS(fnNumericAttr.addToCategory(TransformConstraint::targetCategory));
 
-	// ".targetOffsetScaleX" attribute
+	// Initialize `targetOffsetScaleX` attribute
 	//
 	TransformConstraint::targetOffsetScaleX = fnNumericAttr.create("targetOffsetScaleX", "tosx", MFnNumericData::kDouble, 1.0, &status);
 	CHECK_MSTATUS_AND_RETURN_IT(status);
@@ -1346,7 +1415,7 @@ Use this function to define any static attributes.
 	CHECK_MSTATUS(fnNumericAttr.addToCategory(TransformConstraint::inputCategory));
 	CHECK_MSTATUS(fnNumericAttr.addToCategory(TransformConstraint::targetCategory));
 
-	// ".targetOffsetScaleY" attribute
+	// Initialize `targetOffsetScaleY` attribute
 	//
 	TransformConstraint::targetOffsetScaleY = fnNumericAttr.create("targetOffsetScaleY", "tosy", MFnNumericData::kDouble, 1.0, &status);
 	CHECK_MSTATUS_AND_RETURN_IT(status);
@@ -1354,7 +1423,7 @@ Use this function to define any static attributes.
 	CHECK_MSTATUS(fnNumericAttr.addToCategory(TransformConstraint::inputCategory));
 	CHECK_MSTATUS(fnNumericAttr.addToCategory(TransformConstraint::targetCategory));
 
-	// ".targetOffsetScaleZ" attribute
+	// Initialize `targetOffsetScaleZ` attribute
 	//
 	TransformConstraint::targetOffsetScaleZ = fnNumericAttr.create("targetOffsetScaleZ", "tosz", MFnNumericData::kDouble, 1.0, &status);
 	CHECK_MSTATUS_AND_RETURN_IT(status);
@@ -1362,7 +1431,7 @@ Use this function to define any static attributes.
 	CHECK_MSTATUS(fnNumericAttr.addToCategory(TransformConstraint::inputCategory));
 	CHECK_MSTATUS(fnNumericAttr.addToCategory(TransformConstraint::targetCategory));
 
-	// ".targetOffsetScale" attribute
+	// Initialize `targetOffsetScale` attribute
 	//
 	TransformConstraint::targetOffsetScale = fnNumericAttr.create("targetOffsetScale", "tos", TransformConstraint::targetOffsetScaleX, TransformConstraint::targetOffsetScaleY, TransformConstraint::targetOffsetScaleZ, &status);
 	CHECK_MSTATUS_AND_RETURN_IT(status);
@@ -1370,7 +1439,7 @@ Use this function to define any static attributes.
 	CHECK_MSTATUS(fnNumericAttr.addToCategory(TransformConstraint::inputCategory));
 	CHECK_MSTATUS(fnNumericAttr.addToCategory(TransformConstraint::targetCategory));
 
-	// ".targetRotatePivotX" attribute
+	// Initialize `targetRotatePivotX` attribute
 	//
 	TransformConstraint::targetRotatePivotX = fnUnitAttr.create("targetRotatePivotX", "trpx", MFnUnitAttribute::kDistance, 0.0, &status);
 	CHECK_MSTATUS_AND_RETURN_IT(status);
@@ -1378,7 +1447,7 @@ Use this function to define any static attributes.
 	CHECK_MSTATUS(fnUnitAttr.addToCategory(TransformConstraint::inputCategory));
 	CHECK_MSTATUS(fnUnitAttr.addToCategory(TransformConstraint::targetCategory));
 
-	// ".targetRotatePivotY" attribute
+	// Initialize `targetRotatePivotY` attribute
 	//
 	TransformConstraint::targetRotatePivotY = fnUnitAttr.create("targetRotatePivotY", "trpy", MFnUnitAttribute::kDistance, 0.0, &status);
 	CHECK_MSTATUS_AND_RETURN_IT(status);
@@ -1386,7 +1455,7 @@ Use this function to define any static attributes.
 	CHECK_MSTATUS(fnUnitAttr.addToCategory(TransformConstraint::inputCategory));
 	CHECK_MSTATUS(fnUnitAttr.addToCategory(TransformConstraint::targetCategory));
 
-	// ".targetRotatePivotZ" attribute
+	// Initialize `targetRotatePivotZ` attribute
 	//
 	TransformConstraint::targetRotatePivotZ = fnUnitAttr.create("targetRotatePivotZ", "trpz", MFnUnitAttribute::kDistance, 0.0, &status);
 	CHECK_MSTATUS_AND_RETURN_IT(status);
@@ -1394,7 +1463,7 @@ Use this function to define any static attributes.
 	CHECK_MSTATUS(fnUnitAttr.addToCategory(TransformConstraint::inputCategory));
 	CHECK_MSTATUS(fnUnitAttr.addToCategory(TransformConstraint::targetCategory));
 
-	// ".targetRotatePivot" attribute
+	// Initialize `targetRotatePivot` attribute
 	//
 	TransformConstraint::targetRotatePivot = fnNumericAttr.create("targetRotatePivot", "trp", TransformConstraint::targetRotatePivotX, TransformConstraint::targetRotatePivotY, TransformConstraint::targetRotatePivotZ, &status);
 	CHECK_MSTATUS_AND_RETURN_IT(status);
@@ -1402,7 +1471,7 @@ Use this function to define any static attributes.
 	CHECK_MSTATUS(fnNumericAttr.addToCategory(TransformConstraint::inputCategory));
 	CHECK_MSTATUS(fnNumericAttr.addToCategory(TransformConstraint::targetCategory));
 
-	// ".targetRotatePivotTranslateX" attribute
+	// Initialize `targetRotatePivotTranslateX` attribute
 	//
 	TransformConstraint::targetRotatePivotTranslateX = fnUnitAttr.create("targetRotatePivotTranslateX", "trptx", MFnUnitAttribute::kDistance, 0.0, &status);
 	CHECK_MSTATUS_AND_RETURN_IT(status);
@@ -1410,7 +1479,7 @@ Use this function to define any static attributes.
 	CHECK_MSTATUS(fnUnitAttr.addToCategory(TransformConstraint::inputCategory));
 	CHECK_MSTATUS(fnUnitAttr.addToCategory(TransformConstraint::targetCategory));
 
-	// ".targetRotatePivotTranslateY" attribute
+	// Initialize `targetRotatePivotTranslateY` attribute
 	//
 	TransformConstraint::targetRotatePivotTranslateY = fnUnitAttr.create("targetRotatePivotTranslateY", "trpty", MFnUnitAttribute::kDistance, 0.0, &status);
 	CHECK_MSTATUS_AND_RETURN_IT(status);
@@ -1418,7 +1487,7 @@ Use this function to define any static attributes.
 	CHECK_MSTATUS(fnUnitAttr.addToCategory(TransformConstraint::inputCategory));
 	CHECK_MSTATUS(fnUnitAttr.addToCategory(TransformConstraint::targetCategory));
 
-	// ".targetRotatePivotTranslateZ" attribute
+	// Initialize `targetRotatePivotTranslateZ` attribute
 	//
 	TransformConstraint::targetRotatePivotTranslateZ = fnUnitAttr.create("targetRotatePivotTranslateZ", "trptz", MFnUnitAttribute::kDistance, 0.0, &status);
 	CHECK_MSTATUS_AND_RETURN_IT(status);
@@ -1426,7 +1495,7 @@ Use this function to define any static attributes.
 	CHECK_MSTATUS(fnUnitAttr.addToCategory(TransformConstraint::inputCategory));
 	CHECK_MSTATUS(fnUnitAttr.addToCategory(TransformConstraint::targetCategory));
 
-	// ".targetRotatePivotTranslate" attribute
+	// Initialize `targetRotatePivotTranslate` attribute
 	//
 	TransformConstraint::targetRotatePivotTranslate = fnNumericAttr.create("targetRotatePivotTranslate", "trpt", TransformConstraint::targetRotatePivotTranslateX, TransformConstraint::targetRotatePivotTranslateY, TransformConstraint::targetRotatePivotTranslateZ, &status);
 	CHECK_MSTATUS_AND_RETURN_IT(status);
@@ -1434,7 +1503,7 @@ Use this function to define any static attributes.
 	CHECK_MSTATUS(fnNumericAttr.addToCategory(TransformConstraint::inputCategory));
 	CHECK_MSTATUS(fnNumericAttr.addToCategory(TransformConstraint::targetCategory));
 
-	// ".targetScalePivotX" attribute
+	// Initialize `targetScalePivotX` attribute
 	//
 	TransformConstraint::targetScalePivotX = fnUnitAttr.create("targetScalePivotX", "tspx", MFnUnitAttribute::kDistance, 0.0, &status);
 	CHECK_MSTATUS_AND_RETURN_IT(status);
@@ -1442,7 +1511,7 @@ Use this function to define any static attributes.
 	CHECK_MSTATUS(fnUnitAttr.addToCategory(TransformConstraint::inputCategory));
 	CHECK_MSTATUS(fnUnitAttr.addToCategory(TransformConstraint::targetCategory));
 
-	// ".targetScalePivotY" attribute
+	// Initialize `targetScalePivotY` attribute
 	//
 	TransformConstraint::targetScalePivotY = fnUnitAttr.create("targetScalePivotY", "tspy", MFnUnitAttribute::kDistance, 0.0, &status);
 	CHECK_MSTATUS_AND_RETURN_IT(status);
@@ -1450,7 +1519,7 @@ Use this function to define any static attributes.
 	CHECK_MSTATUS(fnUnitAttr.addToCategory(TransformConstraint::inputCategory));
 	CHECK_MSTATUS(fnUnitAttr.addToCategory(TransformConstraint::targetCategory));
 
-	// ".targetScalePivotZ" attribute
+	// Initialize `targetScalePivotZ` attribute
 	//
 	TransformConstraint::targetScalePivotZ = fnUnitAttr.create("targetScalePivotZ", "tspz", MFnUnitAttribute::kDistance, 0.0, &status);
 	CHECK_MSTATUS_AND_RETURN_IT(status);
@@ -1458,7 +1527,7 @@ Use this function to define any static attributes.
 	CHECK_MSTATUS(fnUnitAttr.addToCategory(TransformConstraint::inputCategory));
 	CHECK_MSTATUS(fnUnitAttr.addToCategory(TransformConstraint::targetCategory));
 
-	// ".targetScalePivot" attribute
+	// Initialize `targetScalePivot` attribute
 	//
 	TransformConstraint::targetScalePivot = fnNumericAttr.create("targetScalePivot", "tsp", TransformConstraint::targetScalePivotX, TransformConstraint::targetScalePivotY, TransformConstraint::targetScalePivotZ, &status);
 	CHECK_MSTATUS_AND_RETURN_IT(status);
@@ -1466,7 +1535,7 @@ Use this function to define any static attributes.
 	CHECK_MSTATUS(fnNumericAttr.addToCategory(TransformConstraint::inputCategory));
 	CHECK_MSTATUS(fnNumericAttr.addToCategory(TransformConstraint::targetCategory));
 
-	// ".targetScaleTranslateX" attribute
+	// Initialize `targetScaleTranslateX` attribute
 	//
 	TransformConstraint::targetScalePivotTranslateX = fnUnitAttr.create("targetScalePivotTranslateX", "tsptx", MFnUnitAttribute::kDistance, 0.0, &status);
 	CHECK_MSTATUS_AND_RETURN_IT(status);
@@ -1474,7 +1543,7 @@ Use this function to define any static attributes.
 	CHECK_MSTATUS(fnUnitAttr.addToCategory(TransformConstraint::inputCategory));
 	CHECK_MSTATUS(fnUnitAttr.addToCategory(TransformConstraint::targetCategory));
 
-	// ".targetScaleTranslateY" attribute
+	// Initialize `targetScaleTranslateY` attribute
 	//
 	TransformConstraint::targetScalePivotTranslateY = fnUnitAttr.create("targetScalePivotTranslateY", "tspty", MFnUnitAttribute::kDistance, 0.0, &status);
 	CHECK_MSTATUS_AND_RETURN_IT(status);
@@ -1482,7 +1551,7 @@ Use this function to define any static attributes.
 	CHECK_MSTATUS(fnUnitAttr.addToCategory(TransformConstraint::inputCategory));
 	CHECK_MSTATUS(fnUnitAttr.addToCategory(TransformConstraint::targetCategory));
 
-	// ".targetScaleTranslateZ" attribute
+	// Initialize `targetScaleTranslateZ` attribute
 	//
 	TransformConstraint::targetScalePivotTranslateZ = fnUnitAttr.create("targetScalePivotTranslateZ", "tsptz", MFnUnitAttribute::kDistance, 0.0, &status);
 	CHECK_MSTATUS_AND_RETURN_IT(status);
@@ -1490,7 +1559,7 @@ Use this function to define any static attributes.
 	CHECK_MSTATUS(fnUnitAttr.addToCategory(TransformConstraint::inputCategory));
 	CHECK_MSTATUS(fnUnitAttr.addToCategory(TransformConstraint::targetCategory));
 
-	// ".targetScaleTranslate" attribute
+	// Initialize `targetScaleTranslate` attribute
 	//
 	TransformConstraint::targetScalePivotTranslate = fnNumericAttr.create("targetScalePivotTranslate", "tspt", TransformConstraint::targetScalePivotTranslateX, TransformConstraint::targetScalePivotTranslateY, TransformConstraint::targetScalePivotTranslateZ, &status);
 	CHECK_MSTATUS_AND_RETURN_IT(status);
@@ -1498,7 +1567,7 @@ Use this function to define any static attributes.
 	CHECK_MSTATUS(fnNumericAttr.addToCategory(TransformConstraint::inputCategory));
 	CHECK_MSTATUS(fnNumericAttr.addToCategory(TransformConstraint::targetCategory));
 
-	// ".targetParentMatrix" attribute
+	// Initialize `targetParentMatrix` attribute
 	//
 	TransformConstraint::targetParentMatrix = fnMatrixAttr.create("targetParentMatrix", "tpm", MFnMatrixAttribute::kDouble, &status);
 	CHECK_MSTATUS_AND_RETURN_IT(status);
@@ -1506,7 +1575,7 @@ Use this function to define any static attributes.
 	CHECK_MSTATUS(fnMatrixAttr.addToCategory(TransformConstraint::inputCategory));
 	CHECK_MSTATUS(fnMatrixAttr.addToCategory(TransformConstraint::targetCategory));
 
-	// Define ".target" attribute
+	// Define ".target` attribute
 	//
 	TransformConstraint::target = fnCompoundAttr.create("target", "tg",&status);
 	CHECK_MSTATUS_AND_RETURN_IT(status);
@@ -1532,7 +1601,7 @@ Use this function to define any static attributes.
 	CHECK_MSTATUS(fnCompoundAttr.addToCategory(TransformConstraint::targetCategory));
 
 	// Output attributes:
-	// Define ".constraintTranslateX" attribute
+	// Define ".constraintTranslateX` attribute
 	//
 	TransformConstraint::constraintTranslateX = fnUnitAttr.create("constraintTranslateX", "ctx", MFnUnitAttribute::kDistance, 0.0, &status);
 	CHECK_MSTATUS_AND_RETURN_IT(status);
@@ -1541,7 +1610,7 @@ Use this function to define any static attributes.
 	CHECK_MSTATUS(fnUnitAttr.setStorable(false));
 	CHECK_MSTATUS(fnUnitAttr.addToCategory(TransformConstraint::outputCategory));
 
-	// ".constraintTranslateY" attribute
+	// Initialize `constraintTranslateY` attribute
 	//
 	TransformConstraint::constraintTranslateY = fnUnitAttr.create("constraintTranslateY", "cty", MFnUnitAttribute::kDistance, 0.0, &status);
 	CHECK_MSTATUS_AND_RETURN_IT(status);
@@ -1550,7 +1619,7 @@ Use this function to define any static attributes.
 	CHECK_MSTATUS(fnUnitAttr.setStorable(false));
 	CHECK_MSTATUS(fnUnitAttr.addToCategory(TransformConstraint::outputCategory));
 
-	// ".constraintTranslateZ" attribute
+	// Initialize `constraintTranslateZ` attribute
 	//
 	TransformConstraint::constraintTranslateZ = fnUnitAttr.create("constraintTranslateZ", "ctz", MFnUnitAttribute::kDistance, 0.0, &status);
 	CHECK_MSTATUS_AND_RETURN_IT(status);
@@ -1559,7 +1628,7 @@ Use this function to define any static attributes.
 	CHECK_MSTATUS(fnUnitAttr.setStorable(false));
 	CHECK_MSTATUS(fnUnitAttr.addToCategory(TransformConstraint::outputCategory));
 
-	// ".constraintTranslate" attribute
+	// Initialize `constraintTranslate` attribute
 	//
 	TransformConstraint::constraintTranslate = fnNumericAttr.create("constraintTranslate", "ct", TransformConstraint::constraintTranslateX, TransformConstraint::constraintTranslateY, TransformConstraint::constraintTranslateZ, &status);
 	CHECK_MSTATUS_AND_RETURN_IT(status);
@@ -1568,7 +1637,7 @@ Use this function to define any static attributes.
 	CHECK_MSTATUS(fnNumericAttr.setStorable(false));
 	CHECK_MSTATUS(fnNumericAttr.addToCategory(TransformConstraint::outputCategory));
 
-	// ".constraintRotateX" attribute
+	// Initialize `constraintRotateX` attribute
 	//
 	TransformConstraint::constraintRotateX = fnUnitAttr.create("constraintRotateX", "crx", MFnUnitAttribute::kAngle, 0.0, &status);
 	CHECK_MSTATUS_AND_RETURN_IT(status);
@@ -1577,7 +1646,7 @@ Use this function to define any static attributes.
 	CHECK_MSTATUS(fnUnitAttr.setStorable(false));
 	CHECK_MSTATUS(fnUnitAttr.addToCategory(TransformConstraint::outputCategory));
 
-	// ".constraintRotateY" attribute
+	// Initialize `constraintRotateY` attribute
 	//
 	TransformConstraint::constraintRotateY = fnUnitAttr.create("constraintRotateY", "cry", MFnUnitAttribute::kAngle, 0.0, &status);
 	CHECK_MSTATUS_AND_RETURN_IT(status);
@@ -1586,7 +1655,7 @@ Use this function to define any static attributes.
 	CHECK_MSTATUS(fnUnitAttr.setStorable(false));
 	CHECK_MSTATUS(fnUnitAttr.addToCategory(TransformConstraint::outputCategory));
 
-	// ".constraintRotateZ" attribute
+	// Initialize `constraintRotateZ` attribute
 	//
 	TransformConstraint::constraintRotateZ = fnUnitAttr.create("constraintRotateZ", "crz", MFnUnitAttribute::kAngle, 0.0, &status);
 	CHECK_MSTATUS_AND_RETURN_IT(status);
@@ -1595,7 +1664,7 @@ Use this function to define any static attributes.
 	CHECK_MSTATUS(fnUnitAttr.setStorable(false));
 	CHECK_MSTATUS(fnUnitAttr.addToCategory(TransformConstraint::outputCategory));
 
-	// ".constraintRotate" attribute
+	// Initialize `constraintRotate` attribute
 	//
 	TransformConstraint::constraintRotate = fnNumericAttr.create("constraintRotate", "cr", TransformConstraint::constraintRotateX, TransformConstraint::constraintRotateY, TransformConstraint::constraintRotateZ, &status);
 	CHECK_MSTATUS_AND_RETURN_IT(status);
@@ -1604,7 +1673,7 @@ Use this function to define any static attributes.
 	CHECK_MSTATUS(fnNumericAttr.setStorable(false));
 	CHECK_MSTATUS(fnNumericAttr.addToCategory(TransformConstraint::outputCategory));
 
-	// ".constraintScaleX" attribute
+	// Initialize `constraintScaleX` attribute
 	//
 	TransformConstraint::constraintScaleX = fnNumericAttr.create("constraintScaleX", "csx", MFnNumericData::kDouble, 0.0, &status);
 	CHECK_MSTATUS_AND_RETURN_IT(status);
@@ -1613,7 +1682,7 @@ Use this function to define any static attributes.
 	CHECK_MSTATUS(fnNumericAttr.setStorable(false));
 	CHECK_MSTATUS(fnNumericAttr.addToCategory(TransformConstraint::outputCategory));
 
-	// ".constraintScaleY" attribute
+	// Initialize `constraintScaleY` attribute
 	//
 	TransformConstraint::constraintScaleY = fnNumericAttr.create("constraintScaleY", "csy", MFnNumericData::kDouble, 0.0, &status);
 	CHECK_MSTATUS_AND_RETURN_IT(status);
@@ -1622,7 +1691,7 @@ Use this function to define any static attributes.
 	CHECK_MSTATUS(fnNumericAttr.setStorable(false));
 	CHECK_MSTATUS(fnNumericAttr.addToCategory(TransformConstraint::outputCategory));
 
-	// ".constraintScaleZ" attribute
+	// Initialize `constraintScaleZ` attribute
 	//
 	TransformConstraint::constraintScaleZ = fnNumericAttr.create("constraintScaleZ", "csz", MFnNumericData::kDouble, 0.0, &status);
 	CHECK_MSTATUS_AND_RETURN_IT(status);
@@ -1631,7 +1700,7 @@ Use this function to define any static attributes.
 	CHECK_MSTATUS(fnNumericAttr.setStorable(false));
 	CHECK_MSTATUS(fnNumericAttr.addToCategory(TransformConstraint::outputCategory));
 
-	// ".constraintScale" attribute
+	// Initialize `constraintScale` attribute
 	//
 	TransformConstraint::constraintScale = fnNumericAttr.create("constraintScale", "cs", TransformConstraint::constraintScaleX, TransformConstraint::constraintScaleY, TransformConstraint::constraintScaleZ, &status);
 	CHECK_MSTATUS_AND_RETURN_IT(status);
@@ -1640,7 +1709,7 @@ Use this function to define any static attributes.
 	CHECK_MSTATUS(fnNumericAttr.setStorable(false));
 	CHECK_MSTATUS(fnNumericAttr.addToCategory(TransformConstraint::outputCategory));
 
-	// ".constraintMatrix" attribute
+	// Initialize `constraintMatrix` attribute
 	//
 	TransformConstraint::constraintMatrix = fnMatrixAttr.create("constraintMatrix", "cm", MFnMatrixAttribute::kDouble, &status);
 	CHECK_MSTATUS_AND_RETURN_IT(status);
@@ -1649,7 +1718,7 @@ Use this function to define any static attributes.
 	CHECK_MSTATUS(fnMatrixAttr.setStorable(false));
 	CHECK_MSTATUS(fnMatrixAttr.addToCategory(TransformConstraint::outputCategory));
 
-	// ".constraintInverseMatrix" attribute
+	// Initialize `constraintInverseMatrix` attribute
 	//
 	TransformConstraint::constraintInverseMatrix = fnMatrixAttr.create("constraintInverseMatrix", "cim", MFnMatrixAttribute::kDouble, &status);
 	CHECK_MSTATUS_AND_RETURN_IT(status);
@@ -1658,7 +1727,7 @@ Use this function to define any static attributes.
 	CHECK_MSTATUS(fnMatrixAttr.setStorable(false));
 	CHECK_MSTATUS(fnMatrixAttr.addToCategory(TransformConstraint::outputCategory));
 
-	// ".constraintWorldMatrix" attribute
+	// Initialize `constraintWorldMatrix` attribute
 	//
 	TransformConstraint::constraintWorldMatrix = fnMatrixAttr.create("constraintWorldMatrix", "cwm", MFnMatrixAttribute::kDouble, &status);
 	CHECK_MSTATUS_AND_RETURN_IT(status);
@@ -1667,7 +1736,7 @@ Use this function to define any static attributes.
 	CHECK_MSTATUS(fnMatrixAttr.setStorable(false));
 	CHECK_MSTATUS(fnMatrixAttr.addToCategory(TransformConstraint::outputCategory));
 
-	// ".constraintWorldInverseMatrix" attribute
+	// Initialize `constraintWorldInverseMatrix` attribute
 	//
 	TransformConstraint::constraintWorldInverseMatrix = fnMatrixAttr.create("constraintWorldInverseMatrix", "cwim", MFnMatrixAttribute::kDouble, &status);
 	CHECK_MSTATUS_AND_RETURN_IT(status);
@@ -1687,11 +1756,19 @@ Use this function to define any static attributes.
 	CHECK_MSTATUS(TransformConstraint::addAttribute(TransformConstraint::constraintRotateOrder));
 	CHECK_MSTATUS(TransformConstraint::addAttribute(TransformConstraint::constraintJointOrient));
 	CHECK_MSTATUS(TransformConstraint::addAttribute(TransformConstraint::constraintScale));
+	CHECK_MSTATUS(TransformConstraint::addAttribute(TransformConstraint::constraintSegmentScaleCompensate));
+	CHECK_MSTATUS(TransformConstraint::addAttribute(TransformConstraint::constraintInverseScale));
 	CHECK_MSTATUS(TransformConstraint::addAttribute(TransformConstraint::constraintMatrix));
 	CHECK_MSTATUS(TransformConstraint::addAttribute(TransformConstraint::constraintInverseMatrix));
 	CHECK_MSTATUS(TransformConstraint::addAttribute(TransformConstraint::constraintWorldMatrix));
 	CHECK_MSTATUS(TransformConstraint::addAttribute(TransformConstraint::constraintWorldInverseMatrix));
 	CHECK_MSTATUS(TransformConstraint::addAttribute(TransformConstraint::constraintParentInverseMatrix));
+
+	// Define rest attribute relationships
+	//
+	CHECK_MSTATUS(TransformConstraint::attributeAffects(TransformConstraint::restTranslate, TransformConstraint::constraintTranslate));
+	CHECK_MSTATUS(TransformConstraint::attributeAffects(TransformConstraint::restRotate, TransformConstraint::constraintRotate));
+	CHECK_MSTATUS(TransformConstraint::attributeAffects(TransformConstraint::restScale, TransformConstraint::constraintScale));
 
 	// Define target attribute relationships
 	//
@@ -1705,20 +1782,8 @@ Use this function to define any static attributes.
 		MObject child = fnCompoundAttr.child(i);
 
 		CHECK_MSTATUS(TransformConstraint::attributeAffects(child, TransformConstraint::constraintTranslate));
-		CHECK_MSTATUS(TransformConstraint::attributeAffects(child, TransformConstraint::constraintTranslateX));
-		CHECK_MSTATUS(TransformConstraint::attributeAffects(child, TransformConstraint::constraintTranslateY));
-		CHECK_MSTATUS(TransformConstraint::attributeAffects(child, TransformConstraint::constraintTranslateZ));
-
 		CHECK_MSTATUS(TransformConstraint::attributeAffects(child, TransformConstraint::constraintRotate));
-		CHECK_MSTATUS(TransformConstraint::attributeAffects(child, TransformConstraint::constraintRotateX));
-		CHECK_MSTATUS(TransformConstraint::attributeAffects(child, TransformConstraint::constraintRotateY));
-		CHECK_MSTATUS(TransformConstraint::attributeAffects(child, TransformConstraint::constraintRotateZ));
-
 		CHECK_MSTATUS(TransformConstraint::attributeAffects(child, TransformConstraint::constraintScale));
-		CHECK_MSTATUS(TransformConstraint::attributeAffects(child, TransformConstraint::constraintScaleX));
-		CHECK_MSTATUS(TransformConstraint::attributeAffects(child, TransformConstraint::constraintScaleY));
-		CHECK_MSTATUS(TransformConstraint::attributeAffects(child, TransformConstraint::constraintScaleZ));
-
 		CHECK_MSTATUS(TransformConstraint::attributeAffects(child, TransformConstraint::constraintMatrix));
 		CHECK_MSTATUS(TransformConstraint::attributeAffects(child, TransformConstraint::constraintInverseMatrix));
 		CHECK_MSTATUS(TransformConstraint::attributeAffects(child, TransformConstraint::constraintWorldMatrix));
@@ -1726,39 +1791,17 @@ Use this function to define any static attributes.
 
 	}
 
-	// Define rest attribute relationships
-	//
-	CHECK_MSTATUS(TransformConstraint::attributeAffects(TransformConstraint::restTranslate, TransformConstraint::constraintTranslate));
-	CHECK_MSTATUS(TransformConstraint::attributeAffects(TransformConstraint::restTranslateX, TransformConstraint::constraintTranslateX));
-	CHECK_MSTATUS(TransformConstraint::attributeAffects(TransformConstraint::restTranslateY, TransformConstraint::constraintTranslateY));
-	CHECK_MSTATUS(TransformConstraint::attributeAffects(TransformConstraint::restTranslateZ, TransformConstraint::constraintTranslateZ));
-
-	CHECK_MSTATUS(TransformConstraint::attributeAffects(TransformConstraint::restRotate, TransformConstraint::constraintRotate));
-	CHECK_MSTATUS(TransformConstraint::attributeAffects(TransformConstraint::restRotateX, TransformConstraint::constraintRotateX));
-	CHECK_MSTATUS(TransformConstraint::attributeAffects(TransformConstraint::restRotateY, TransformConstraint::constraintRotateY));
-	CHECK_MSTATUS(TransformConstraint::attributeAffects(TransformConstraint::restRotateZ, TransformConstraint::constraintRotateZ));
-
 	// Define constraint attribute relationships
 	//
 	CHECK_MSTATUS(TransformConstraint::attributeAffects(TransformConstraint::constraintRotateOrder, TransformConstraint::constraintRotate));
-
 	CHECK_MSTATUS(TransformConstraint::attributeAffects(TransformConstraint::constraintJointOrient, TransformConstraint::constraintRotate));
-	CHECK_MSTATUS(TransformConstraint::attributeAffects(TransformConstraint::constraintJointOrientX, TransformConstraint::constraintRotateX));
-	CHECK_MSTATUS(TransformConstraint::attributeAffects(TransformConstraint::constraintJointOrientY, TransformConstraint::constraintRotateY));
-	CHECK_MSTATUS(TransformConstraint::attributeAffects(TransformConstraint::constraintJointOrientZ, TransformConstraint::constraintRotateZ));
+
+	CHECK_MSTATUS(TransformConstraint::attributeAffects(TransformConstraint::constraintSegmentScaleCompensate, TransformConstraint::constraintScale));
+	CHECK_MSTATUS(TransformConstraint::attributeAffects(TransformConstraint::constraintInverseScale, TransformConstraint::constraintScale));
 
 	CHECK_MSTATUS(TransformConstraint::attributeAffects(TransformConstraint::constraintParentInverseMatrix, TransformConstraint::constraintTranslate));
-	CHECK_MSTATUS(TransformConstraint::attributeAffects(TransformConstraint::constraintParentInverseMatrix, TransformConstraint::constraintTranslateX));
-	CHECK_MSTATUS(TransformConstraint::attributeAffects(TransformConstraint::constraintParentInverseMatrix, TransformConstraint::constraintTranslateY));
-	CHECK_MSTATUS(TransformConstraint::attributeAffects(TransformConstraint::constraintParentInverseMatrix, TransformConstraint::constraintTranslateZ));
 	CHECK_MSTATUS(TransformConstraint::attributeAffects(TransformConstraint::constraintParentInverseMatrix, TransformConstraint::constraintRotate));
-	CHECK_MSTATUS(TransformConstraint::attributeAffects(TransformConstraint::constraintParentInverseMatrix, TransformConstraint::constraintRotateX));
-	CHECK_MSTATUS(TransformConstraint::attributeAffects(TransformConstraint::constraintParentInverseMatrix, TransformConstraint::constraintRotateY));
-	CHECK_MSTATUS(TransformConstraint::attributeAffects(TransformConstraint::constraintParentInverseMatrix, TransformConstraint::constraintRotateZ));
 	CHECK_MSTATUS(TransformConstraint::attributeAffects(TransformConstraint::constraintParentInverseMatrix, TransformConstraint::constraintScale));
-	CHECK_MSTATUS(TransformConstraint::attributeAffects(TransformConstraint::constraintParentInverseMatrix, TransformConstraint::constraintScaleX));
-	CHECK_MSTATUS(TransformConstraint::attributeAffects(TransformConstraint::constraintParentInverseMatrix, TransformConstraint::constraintScaleY));
-	CHECK_MSTATUS(TransformConstraint::attributeAffects(TransformConstraint::constraintParentInverseMatrix, TransformConstraint::constraintScaleZ));
 	CHECK_MSTATUS(TransformConstraint::attributeAffects(TransformConstraint::constraintParentInverseMatrix, TransformConstraint::constraintMatrix));
 	CHECK_MSTATUS(TransformConstraint::attributeAffects(TransformConstraint::constraintParentInverseMatrix, TransformConstraint::constraintInverseMatrix));
 	CHECK_MSTATUS(TransformConstraint::attributeAffects(TransformConstraint::constraintParentInverseMatrix, TransformConstraint::constraintWorldMatrix));
